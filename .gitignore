@@ -1,0 +1,13 @@
+# Stuff
+*.zip
+
+# Terraform
+terraform.tfvars
+.terraform
+*.tfstate
+*.tfstate.backup
+.terraform.tfstate.lock.info
+
+# Environment
+terraform.tfvars
+.gemini/
