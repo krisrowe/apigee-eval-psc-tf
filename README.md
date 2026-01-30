@@ -39,30 +39,49 @@ Choose the scenario that matches your situation.
     Ensure your project exists and has billing linked.
     ```bash
     gcloud projects create my-new-project-id
-    gcloud beta billing projects link my-new-project-id --billing-account=YOUR_BILLING_ACCT_ID
+    
+    # Optional: Get Billing ID from an existing project
+    BILLING_ID=$(gcloud beta billing projects describe OTHER_PROJECT_ID --format="value(billingAccountName.segment(-1))")
+    gcloud beta billing projects link my-new-project-id --billing-account=$BILLING_ID
     ```
 
 2.  **Initialize Config**:
-    Use the `import` command to create a local configuration profile. Use `--force` since the project is empty.
+    Setup your project configuration profile using the `import` command.
+    
+    *Variation A: Explicit Project ID*
     ```bash
-    ./util import my-alias --project my-new-project-id --force
+    ./util import my-alias --project my-new-project-id --template templates/ca-drz.json
     ```
-    *This creates `~/.config/apigee-tf/projects/my-alias.tfvars` aligned to the project.*
 
-3.  **Configure DRZ (Optional)**:
-    If you need Data Residency (e.g., Canada), edit your tfvars file:
+    *Variation B: Auto-Discovery (uses project labels)*
     ```bash
-    # Edit ~/.config/apigee-tf/projects/my-alias.tfvars
-    control_plane_location = "ca"  # or "eu", "au" etc.
-    apigee_analytics_region = "northamerica-northeast1"
-    apigee_runtime_location = "northamerica-northeast1"
+    ./util import my-alias --template templates/ca-drz.json
     ```
+
+3.  **Verify Configuration**:
+    Run the show command to verify the configuration before deploying.
+    ```bash
+    ./util show my-alias
+    ```
+    *Manual Verification: Inspect the raw file at `$HOME/.config/apigee-tf/projects/my-alias.tfvars` or run `./util show my-alias --raw`*
 
 4.  **Deploy**:
     ```bash
     ./util apply my-alias
     ```
-    *Note: Organization creation takes ~20-30 minutes.*
+    *Manual Execution: This wraps `terraform apply -var-file=$HOME/.config/apigee-tf/projects/my-alias.tfvars`*
+
+    *Note: Organization and Instance creation takes ~20-30 minutes.*
+
+> [!TIP]
+> **Custom Inputs**: To provide your own configuration (e.g. custom domain) without editing files, create a JSON template:
+> ```json
+> {
+>   "domain_name": "api.custom.com",
+>   "apigee_analytics_region": "us-central1"
+> }
+> ```
+> Then pass it: `./util import my-alias --project my-id --template my-config.json`
 
 ### Scenario 2: Existing Project (Discovery)
 *Use this if you already have an Apigee Organization and want to bring it under Terraform management.*
@@ -78,10 +97,11 @@ Choose the scenario that matches your situation.
 
 3.  **Plan & Apply**:
     ```bash
+    ./util show existing-alias
     ./util plan existing-alias
     ./util apply existing-alias
     ```
-    *Terraform will sync its state with the cloud resources without destroying them.*
+    *Manual execution: Direct terraform commands are available once the workspace is selected.*
 
 ---
 
@@ -115,11 +135,10 @@ This architecture is secure, private, and does not require VPC Peering peering l
 ## Common Issues
 
 ### "Billing type EVALUATION is not allowed"
-**Cause**: You requested DRZ (`control_plane_location="ca"`) but the API rejected the request, usually because the project lacks a valid Billing Account link or entitlements.
-**Fix**:
+**Cause**: You requested DRZ (`control_plane_location="ca"`) but the GCP API rejected the request. Usually, this means the project is in a **corrupted/expired evaluation state** where legacy settings prevent paid provisioning, even after linking a billing account.
+**Fix**: 
 1.  Verify Billing is linked: `gcloud beta billing projects describe PROJECT_ID`
-2.  Ensure you have `apigee.googleapis.com` enabled.
-3.  Use a Fresh Project. Legacy projects with expired evaluations can get stuck.
+2.  **Move to a Fresh Project**. For DRZ, the safest path is initializing a brand new Google Cloud Project and linking billing *before* enabling Apigee.
 
 ### "Resource already exists"
 **Cause**: You tried to `apply` on a project that already has Apigee, but your State file is empty.
@@ -132,6 +151,6 @@ This architecture is secure, private, and does not require VPC Peering peering l
 Wrapper around Terraform to manage multi-project state/config.
 
 -   `./util list` - List configured projects.
--   `./util import <alias>` - Discovery & Setup.
--   `./util plan <alias>` - Dry run.
--   `./util apply <alias>` - Deploy.
+-   `./util import <alias>` - Setup or Import project configuration.
+-   `./util plan <alias>` - Dry run / Validation.
+-   `./util apply <alias>` - Deploy infrastructure.
