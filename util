@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+
+import argparse
+import sys
+import os
+
+# Ensure the project root is in sys.path so we can import 'scripts'
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from scripts.cli.commands.list import cmd_list
+from scripts.cli.commands.show import cmd_show
+from scripts.cli.commands.import_ import cmd_import
+from scripts.cli.commands.terraform import run_terraform
+from scripts.cli.commands.config import cmd_config
+
+def main():
+    parser = argparse.ArgumentParser(description="Apigee Terraform Multi-Env Utility")
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    subparsers.add_parser("list")
+    
+    show = subparsers.add_parser("show")
+    show.add_argument("name")
+    show.add_argument("--raw", action="store_true")
+
+    imp = subparsers.add_parser("import")
+    imp.add_argument("name")
+    imp.add_argument("--project")
+    imp.add_argument("--force", action="store_true", help="Force overwrite of existing config/state if project ID differs.")
+    imp.add_argument("--template", help="Path to template JSON file for configuration defaults")
+
+    # Config command
+    conf = subparsers.add_parser("config")
+    conf_sub = conf.add_subparsers(dest="action", required=True)
+    
+    setter = conf_sub.add_parser("set")
+    setter.add_argument("key")
+    setter.add_argument("value")
+    
+    getter = conf_sub.add_parser("get")
+    getter.add_argument("key", nargs="?")
+
+    conf_sub.add_parser("list")
+
+    for action in ["plan", "apply", "destroy", "refresh", "output", "init"]:
+        p = subparsers.add_parser(action)
+        p.add_argument("name")
+        p.add_argument("extra_args", nargs=argparse.REMAINDER)
+
+    args = parser.parse_args()
+    if args.command == "list": cmd_list(args)
+    elif args.command == "show": cmd_show(args)
+    elif args.command == "import": cmd_import(args)
+    elif args.command == "config": cmd_config(args)
+    elif args.command in ["plan", "apply", "destroy", "refresh", "output", "init"]:
+        run_terraform(args.command, args.name, args.extra_args)
+    else: parser.print_help()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)

@@ -1,5 +1,6 @@
 # Stuff
 *.zip
+.DS_Store
 
 # Terraform
 terraform.tfvars
@@ -7,7 +8,11 @@ terraform.tfvars
 *.tfstate
 *.tfstate.backup
 .terraform.tfstate.lock.info
+generated_imports.tf
 
-# Environment
-terraform.tfvars
+# Environment / Temp
+.tmp/
 .gemini/
+.venv/
+__pycache__/
+*.pyc

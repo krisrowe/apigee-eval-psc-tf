@@ -1,75 +1,137 @@
-# Apigee Eval Org with PSC Terraform
+# Apigee Terraform Provisioning
 
-This repository provides a reusable Terraform script to provision a complete Apigee evaluation organization in Google Cloud.
+This repository provides a production-grade Terraform framework for deploying Apigee X/Hybrid organizations on Google Cloud, specifically designed to handle **Evaluation Logic**, **Data Residency (DRZ)**, and **Private Service Connect (PSC)** ingress.
 
-The primary goal is to create a modern, secure Apigee setup that avoids VPC peering, instead relying entirely on **Private Service Connect (PSC)** for all traffic.
+It interacts seamlessly with a custom CLI utility (`./util`) to manage multiple project configurations without polluting the repository.
 
-## Key Features
+## Capabilities
 
-- **No VPC Peering:** Simplifies network architecture and reduces dependencies.
-- **Northbound PSC:** Exposes the Apigee runtime via an External HTTPS Load Balancer using a PSC Network Endpoint Group (NEG).
-- **Custom Domain:** Supports custom domain names for the API ingress endpoint with a managed SSL certificate.
-- **Southbound PSC (Example):** Includes a sample API proxy (`weather-api`) that demonstrates how to securely connect to a backend microservice via PSC. *(Note: The backend service and its corresponding PSC setup are not included in this script and must be provisioned separately).*
-- **Automated Setup:** A simple shell script helps configure the GCP project ID.
+-   **Modular Design**: Resources are flattened for simplicity but logically separated (Core vs. Ingress).
+-   **Data Residency (DRZ)**: Supports creating Organization in specific Control Plane jurisdictions (e.g., Canada `northamerica-northeast1`).
+-   **Billing Awareness**: Automatically handles `PAYG` (Pay-as-you-go) vs. `EVALUATION` billing types based on project constraints and DRZ requirements.
+-   **State Management**: Stores state locally in `~/.local/share/apigee-tf/`, keeping your git repository clean.
+-   **Discovery**: Can "Import" existing cloud resources into Terraform state automatically.
+
+---
 
 ## Prerequisites
 
--   A Google Cloud Project with billing enabled.
--   The `gcloud` CLI installed and authenticated (`gcloud auth application-default login`).
--   Terraform installed (version >= 1.4).
--   A registered domain name that you can control to point to the Load Balancer's IP address.
+Before you begin, ensure you have:
 
-## Quick Start
+1.  **Google Cloud Project**:
+    -   Must have **Billing Enabled** (Required for DRZ/PAYG).
+    -   Must have `Owner` or `Editor` permissions.
+2.  **Tools**:
+    -   `gcloud` CLI (Authenticated: `gcloud auth application-default login`)
+    -   Terraform (v1.5+)
+    -   Python 3
 
-1.  **Clone the Repository**
+---
+
+## Quick Start Scenarios
+
+Choose the scenario that matches your situation.
+
+### Scenario 1: Brand New Project (Clean Slate)
+*Use this if you have a freshly created Project ID and want to provision Apigee from scratch, possibly with DRZ.*
+
+1.  **Prepare Project**:
+    Ensure your project exists and has billing linked.
     ```bash
-    git clone <repository-url>
-    cd apigee-eval-psc-tf
+    gcloud projects create my-new-project-id
+    gcloud beta billing projects link my-new-project-id --billing-account=YOUR_BILLING_ACCT_ID
     ```
 
-2.  **Prepare Configuration**
-
-    You have two options: the automated script (recommended) or manual setup.
-
-    **Option A: Automated Script**
-    Run the configuration script. It will prompt you for your GCP Project ID and automatically create your `terraform.tfvars` file.
-
+2.  **Initialize Config**:
+    Use the `import` command to create a local configuration profile. Use `--force` since the project is empty.
     ```bash
-    bash scripts/configure_project.sh
+    ./util import my-alias --project my-new-project-id --force
+    ```
+    *This creates `~/.config/apigee-tf/projects/my-alias.tfvars` aligned to the project.*
+
+3.  **Configure DRZ (Optional)**:
+    If you need Data Residency (e.g., Canada), edit your tfvars file:
+    ```bash
+    # Edit ~/.config/apigee-tf/projects/my-alias.tfvars
+    control_plane_location = "ca"  # or "eu", "au" etc.
+    apigee_analytics_region = "northamerica-northeast1"
+    apigee_runtime_location = "northamerica-northeast1"
     ```
 
-    **Option B: Manual Setup**
-    Copy the example variables file.
-
+4.  **Deploy**:
     ```bash
-    cp terraform.tfvars.example terraform.tfvars
+    ./util apply my-alias
     ```
-    Now, edit `terraform.tfvars` and set the required values for `gcp_project_id` and `domain_name`.
+    *Note: Organization creation takes ~20-30 minutes.*
 
-3.  **Deploy with Terraform**
+### Scenario 2: Existing Project (Discovery)
+*Use this if you already have an Apigee Organization and want to bring it under Terraform management.*
 
-    Initialize Terraform to download the necessary providers.
+1.  **Import & Align**:
+    Run `import` without force. The tool will probe the API for existing Org, Instances, and Environment Groups.
     ```bash
-    terraform init
+    ./util import existing-alias --project existing-project-id
     ```
+    
+2.  **Generate Import Blocks**:
+    The tool generates `generated_imports.tf`. Review this file to see what resources will be imported into Terraform state.
 
-    Preview the changes that will be made.
+3.  **Plan & Apply**:
     ```bash
-    terraform plan
+    ./util plan existing-alias
+    ./util apply existing-alias
     ```
+    *Terraform will sync its state with the cloud resources without destroying them.*
 
-    Apply the configuration to create the Apigee resources. This step can take a significant amount of time (often 45-60 minutes) for the Apigee organization and instance to be provisioned.
-    ```bash
-    terraform apply
-    ```
+---
 
-## Backup and Recovery
+## Configuration Reference
 
-This Terraform project is designed to be reusable. To recreate or manage this environment from another machine, you only need a few key pieces of information.
+The behavior of the deployment is controlled by `~/.config/apigee-tf/projects/<alias>.tfvars`.
 
--   **`terraform.tfvars`:** This is the most critical file to back up manually. It contains the specific variables for your deployment, such as your project ID and domain name.
--   **Terraform State File (`terraform.tfstate`):** Terraform uses this file to keep track of the resources it manages.
-    -   By default, this file is created locally. You should back this file up if you want to manage the infrastructure from a different location.
-    -   **Recommendation:** For any serious or collaborative use, it is highly recommended to configure a [Terraform remote backend](https://www.terraform.io/language/state/backends) (like a Google Cloud Storage bucket). This stores the state file securely and centrally, making it accessible to you or your team from anywhere. The `.gitignore` file is already configured to ignore local state files.
+| Variable | Description | Default / Example |
+| :--- | :--- | :--- |
+| `gcp_project_id` | **Required.** Target GCP Project ID. | `my-project-id` |
+| `project_nickname` | **Required.** Config alias name. | `my-alias` |
+| `apigee_analytics_region` | Primary region for Analytics/Data. | `northamerica-northeast1` |
+| `apigee_runtime_location` | Region for Runtime Instance. | `northamerica-northeast1` |
+| `control_plane_location` | **Critical for DRZ.** Control plane jurisdiction. Leave empty for Global. | `"ca"` (Canada), `"eu"` (Europe), `""` (Global) |
+| `domain_name` | Domain for SSL/DNS. | `my-alias.example.com` |
 
-By backing up `terraform.tfvars` and your state file, you can clone this repository on any machine, restore those files, and continue managing your Apigee environment seamlessly.
+---
+
+## Architecture & Billing Types
+
+### Billing: PAYG vs. Evaluation
+-   **PAYG (Pay-as-you-go)**: Hardcoded default for this repo. Required for DRZ. Requires a valid billing account linked to the project.
+-   **EVALUATION**: Standard free tier. **Does not support DRZ** (Control Plane Data Residency).
+
+### Network Topology
+Traffic enters via **Global External Load Balancer (GXLB)** -> **Private Service Connect (PSC)** -> **Apigee Runtime**.
+This architecture is secure, private, and does not require VPC Peering peering limits.
+
+---
+
+## Common Issues
+
+### "Billing type EVALUATION is not allowed"
+**Cause**: You requested DRZ (`control_plane_location="ca"`) but the API rejected the request, usually because the project lacks a valid Billing Account link or entitlements.
+**Fix**:
+1.  Verify Billing is linked: `gcloud beta billing projects describe PROJECT_ID`
+2.  Ensure you have `apigee.googleapis.com` enabled.
+3.  Use a Fresh Project. Legacy projects with expired evaluations can get stuck.
+
+### "Resource already exists"
+**Cause**: You tried to `apply` on a project that already has Apigee, but your State file is empty.
+**Fix**: Use `Scenario 2` (Import) to recover state.
+
+---
+
+## CLI Utility (`./util`)
+
+Wrapper around Terraform to manage multi-project state/config.
+
+-   `./util list` - List configured projects.
+-   `./util import <alias>` - Discovery & Setup.
+-   `./util plan <alias>` - Dry run.
+-   `./util apply <alias>` - Deploy.

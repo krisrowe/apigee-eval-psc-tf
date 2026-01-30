@@ -1,48 +1,59 @@
-terraform {
-  required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = ">= 4.54.0"
-    }
-    archive = {
-      source  = "hashicorp/archive"
-      version = ">= 2.2.0"
-    }
+locals {
+  environments = {
+    eval = {}
+  }
+  envgroups = {
+    eval-group = ["eval"]
   }
 }
 
-provider "google" {
-  project = var.gcp_project_id
+resource "null_resource" "project_label" {
+  provisioner "local-exec" {
+    command = "gcloud projects update ${var.gcp_project_id} --update-labels=apigee-tf=${var.project_nickname}"
+  }
 }
 
-# --- GCP Project Services ---
+data "google_project" "project" {
+  project_id = var.gcp_project_id
+}
 
 resource "google_project_service" "apigee" {
+  project = var.gcp_project_id
   service = "apigee.googleapis.com"
 }
 
 resource "google_project_service" "cloudkms" {
+  project = var.gcp_project_id
   service = "cloudkms.googleapis.com"
 }
 
 resource "google_project_service" "compute" {
+  project = var.gcp_project_id
   service = "compute.googleapis.com"
 }
 
 resource "google_project_service" "servicenetworking" {
+  project = var.gcp_project_id
   service = "servicenetworking.googleapis.com"
 }
 
-# --- Apigee Core Components ---
-
 resource "google_apigee_organization" "apigee_org" {
-  project_id          = var.gcp_project_id
-  display_name        = var.gcp_project_id # Using project ID as display name
-  description         = "Apigee organization for evaluation"
-  analytics_region    = var.apigee_analytics_region
-  runtime_type        = "CLOUD"
-  billing_type        = "EVALUATION"
-  disable_vpc_peering = true
+  project_id                 = var.gcp_project_id
+  analytics_region           = var.apigee_analytics_region
+  
+  # Dynamic Data Location Logic
+  api_consumer_data_location = var.control_plane_location != null && var.control_plane_location != "" ? var.apigee_analytics_region : null
+  
+  runtime_type               = "CLOUD"
+  
+  # HARDCODED AS REQUESTED
+  billing_type               = "PAYG" 
+  
+  disable_vpc_peering        = true
+
+  lifecycle {
+    prevent_destroy = true
+  }
 
   depends_on = [
     google_project_service.apigee,
@@ -56,93 +67,80 @@ resource "google_apigee_instance" "apigee_instance" {
   name     = var.apigee_runtime_location
   location = var.apigee_runtime_location
   org_id   = google_apigee_organization.apigee_org.id
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
-# --- Apigee API Proxy Deployment ---
-
-data "archive_file" "weather_api_bundle" {
-  type        = "zip"
-  source_dir  = "apiproxies/weather-api"
-  output_path = "${path.module}/weather-api.zip"
+resource "google_apigee_environment" "apigee_env" {
+  for_each = local.environments
+  name     = each.key
+  org_id   = google_apigee_organization.apigee_org.id
 }
 
-resource "google_apigee_api" "weather_api" {
-  org_id        = google_apigee_organization.apigee_org.id
-  name          = "weather-api"
-  config_bundle = data.archive_file.weather_api_bundle.output_path
+resource "google_apigee_envgroup" "envgroup" {
+  for_each = local.envgroups
+  name      = each.key
+  org_id    = google_apigee_organization.apigee_org.id
+  hostnames = ["*"] 
 }
 
-resource "google_apigee_api_deployment" "weather_api_deployment" {
-  org_id      = google_apigee_api.weather_api.org_id
-  environment = "eval"
-  proxy_id    = google_apigee_api.weather_api.name
-  revision    = google_apigee_api.weather_api.latest_revision_id
+resource "google_apigee_envgroup_attachment" "envgroup_attachment" {
+  for_each = {
+    for pair in flatten([
+      for eg, envs in local.envgroups : [
+        for env in envs : { eg = eg, env = env }
+      ]
+    ]) : "${pair.eg}-${pair.env}" => pair
+  }
+
+  envgroup_id = google_apigee_envgroup.envgroup[each.value.eg].id
+  environment = google_apigee_environment.apigee_env[each.value.env].name
+}
+
+resource "google_apigee_instance_attachment" "instance_attachment" {
+  for_each    = local.environments
+  instance_id = google_apigee_instance.apigee_instance.id
+  environment = google_apigee_environment.apigee_env[each.key].name
+}
+
+module "ingress_lb" {
+  source = "./modules/ingress-lb"
+
+  project_id         = var.gcp_project_id
+  name               = "apigee-ingress"
+  region             = var.apigee_runtime_location
+  domain_name        = var.domain_name
+  service_attachment = google_apigee_instance.apigee_instance.service_attachment
 
   depends_on = [
-    google_apigee_instance.apigee_instance
+    google_apigee_organization.apigee_org
   ]
 }
 
-# --- Ingress Layer (External HTTPS Load Balancer) ---
+# --- Apigee API Proxy Deployment (Example) ---
+# NOTE: These resources are not yet available in the stable google provider
 
-resource "google_compute_global_address" "northbound_lb_ip" {
-  name = "apigee-eval-psc-ip"
-}
+# data "archive_file" "weather_api_bundle" {
+#   type        = "zip"
+#   source_dir  = "apiproxies/weather-api"
+#   output_path = "${path.module}/weather-api.zip"
+# }
 
-resource "google_compute_managed_ssl_certificate" "northbound_lb_ssl_cert" {
-  name = "apigee-ingress-cert"
-  managed {
-    domains = [var.domain_name]
-  }
-}
+# resource "google_apigee_api" "weather_api" {
+#   org_id        = module.apigee_core.org_id
+#   name          = "weather-api"
+#   config_bundle = data.archive_file.weather_api_bundle.output_path
+# }
 
-resource "google_compute_health_check" "northbound_lb_health_check" {
-  name                = "apigee-proxy-health-check"
-  check_interval_sec  = 5
-  timeout_sec         = 5
-  healthy_threshold   = 2
-  unhealthy_threshold = 2
+# resource "google_apigee_api_deployment" "weather_api_deployment" {
+#   org_id      = module.apigee_core.org_id
+#   environment = "eval"
+#   proxy_id    = google_apigee_api.weather_api.name
+#   revision    = google_apigee_api.weather_api.latest_revision_id
 
-  tcp_health_check {
-    port = "443"
-  }
-}
-
-resource "google_compute_region_network_endpoint_group" "northbound_psc_neg" {
-  name                  = "apigee-psc-neg"
-  network_endpoint_type = "PRIVATE_SERVICE_CONNECT"
-  psc_target_service    = google_apigee_instance.apigee_instance.service_attachment
-  region                = var.apigee_runtime_location
-  
-  depends_on = [google_apigee_instance.apigee_instance]
-}
-
-resource "google_compute_backend_service" "northbound_lb_backend_service" {
-  name                  = "apigee-psc-backend"
-  protocol              = "HTTPS"
-  port_name             = "https"
-  load_balancing_scheme = "EXTERNAL_MANAGED"
-  health_checks         = [google_compute_health_check.northbound_lb_health_check.id]
-
-  backend {
-    group = google_compute_region_network_endpoint_group.northbound_psc_neg.id
-  }
-}
-
-resource "google_compute_url_map" "northbound_lb_url_map" {
-  name            = "apigee-proxy-url-map"
-  default_service = google_compute_backend_service.northbound_lb_backend_service.id
-}
-
-resource "google_compute_target_https_proxy" "northbound_lb_https_proxy" {
-  name             = "apigee-proxy-https-proxy"
-  url_map          = google_compute_url_map.northbound_lb_url_map.id
-  ssl_certificates = [google_compute_managed_ssl_certificate.northbound_lb_ssl_cert.id]
-}
-
-resource "google_compute_global_forwarding_rule" "northbound_lb_forwarding_rule" {
-  name       = "apigee-proxy-forwarding-rule"
-  target     = google_compute_target_https_proxy.northbound_lb_https_proxy.id
-  ip_address = google_compute_global_address.northbound_lb_ip.address
-  port_range = "443"
-}
+#   depends_on = [
+#     module.apigee_core
+#   ]
+# }
