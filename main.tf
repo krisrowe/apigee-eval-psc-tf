@@ -37,9 +37,16 @@ resource "google_project_service" "servicenetworking" {
   service = "servicenetworking.googleapis.com"
 }
 
+resource "google_compute_network" "apigee_network" {
+  name                    = "apigee-network"
+  project                 = var.gcp_project_id
+  auto_create_subnetworks = true
+  depends_on              = [google_project_service.compute]
+}
+
 resource "google_apigee_organization" "apigee_org" {
   project_id                 = var.gcp_project_id
-  analytics_region           = var.apigee_analytics_region
+  analytics_region           = var.control_plane_location != null && var.control_plane_location != "" ? "" : var.apigee_analytics_region
   
   # Dynamic Data Location Logic
   api_consumer_data_location = var.control_plane_location != null && var.control_plane_location != "" ? var.apigee_analytics_region : null
@@ -83,7 +90,7 @@ resource "google_apigee_envgroup" "envgroup" {
   for_each = local.envgroups
   name      = each.key
   org_id    = google_apigee_organization.apigee_org.id
-  hostnames = ["*"] 
+  hostnames = [var.domain_name] 
 }
 
 resource "google_apigee_envgroup_attachment" "envgroup_attachment" {
@@ -113,6 +120,7 @@ module "ingress_lb" {
   region             = var.apigee_runtime_location
   domain_name        = var.domain_name
   service_attachment = google_apigee_instance.apigee_instance.service_attachment
+  network            = google_compute_network.apigee_network.id
 
   depends_on = [
     google_apigee_organization.apigee_org
