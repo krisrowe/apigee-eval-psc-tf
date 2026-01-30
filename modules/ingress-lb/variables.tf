@@ -22,3 +22,8 @@ variable "service_attachment" {
   description = "The Apigee instance service attachment URI."
   type        = string
 }
+
+variable "network" {
+  description = "The VPC network for the PSC NEG."
+  type        = string
+}

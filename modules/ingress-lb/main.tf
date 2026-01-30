@@ -30,6 +30,7 @@ resource "google_compute_region_network_endpoint_group" "psc_neg" {
   network_endpoint_type = "PRIVATE_SERVICE_CONNECT"
   psc_target_service    = var.service_attachment
   region                = var.region
+  network               = var.network
 }
 
 resource "google_compute_backend_service" "lb_backend" {
@@ -38,7 +39,8 @@ resource "google_compute_backend_service" "lb_backend" {
   protocol              = "HTTPS"
   port_name             = "https"
   load_balancing_scheme = "EXTERNAL_MANAGED"
-  health_checks         = [google_compute_health_check.lb_health_check.id]
+  # Health checks are not supported for PSC NEG backends
+  # health_checks         = [google_compute_health_check.lb_health_check.id]
 
   backend {
     group = google_compute_region_network_endpoint_group.psc_neg.id
