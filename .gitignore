@@ -12,7 +12,11 @@ generated_imports.tf
 
 # Environment / Temp
 .tmp/
+temp/
 .gemini/
 .venv/
 __pycache__/
 *.pyc
+weather-api.zip
+server.key
+server.crt

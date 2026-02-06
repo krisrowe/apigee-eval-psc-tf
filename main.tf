@@ -1,9 +1,9 @@
 locals {
   environments = {
-    eval = {}
+    dev = {}
   }
   envgroups = {
-    eval-group = ["eval"]
+    eval-group = ["dev"]
   }
 }
 
@@ -84,6 +84,7 @@ resource "google_apigee_environment" "apigee_env" {
   for_each = local.environments
   name     = each.key
   org_id   = google_apigee_organization.apigee_org.id
+  type     = "COMPREHENSIVE"
 }
 
 resource "google_apigee_envgroup" "envgroup" {
