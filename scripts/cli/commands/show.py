@@ -1,7 +1,7 @@
 import sys
 import json
 from pathlib import Path
-from scripts.cli.core import get_project_paths, load_tfstate, load_vars, api_get
+from scripts.cli.core import get_project_paths, load_tfstate, load_vars, api_get, check_dns, check_ssl
 
 # ANSI Colors
 RED = '\033[91m'
@@ -39,14 +39,14 @@ def cmd_show(args):
     # 1. LIVE CLOUD STATUS (API PROBE)
     if project_id:
         print(f"\n{BOLD}CLOUD STATUS (Live API):{RESET}")
-        org = api_get(f"organizations/{project_id}")
+        org = api_get(f"organizations/{project_id}", name)
         if not org:
             print(f"    {RED}✗ Apigee Organization not found in {project_id}{RESET}")
         else:
             print(f"    {GREEN}✓ Apigee Organization:{RESET} {org.get('state')} ({org.get('billingType')})")
             
             # Probe Instances
-            inst_data = api_get(f"organizations/{project_id}/instances")
+            inst_data = api_get(f"organizations/{project_id}/instances", name)
             if inst_data and "instances" in inst_data:
                 for inst in inst_data["instances"]:
                     print(f"    {GREEN}✓ Instance Found:{RESET}     {inst['name']} in {BOLD}{inst['location']}{RESET}")
@@ -105,6 +105,33 @@ def cmd_show(args):
                     print(f"    | {disp_name} | {status_str} | {disp_id} |")
             
             print(f"    +--------------------------------+-----------+------------------------------------+")
+
+    # 4. INGRESS & READINESS (Diagnostics)
+    print(f"\n{BOLD}INGRESS & READINESS:{RESET}")
+    # Get hostname from state
+    from scripts.cli.commands.apis import get_environment_hostname
+    try:
+        hostname = get_environment_hostname(name, "dev")
+        print(f"  + Hostname: {CYAN}{hostname}{RESET}")
+        
+        # DNS
+        dns_ok, dns_ip = check_dns(hostname)
+        dns_str = f"{GREEN}✓ Resolves to {dns_ip}{RESET}" if dns_ok else f"{YELLOW}⚠ NXDOMAIN (Pending Propagation){RESET}"
+        print(f"  + DNS:      {dns_str}")
+        
+        # SSL
+        if project_id:
+            ssl_status, domain_status = check_ssl(project_id, hostname)
+            if ssl_status == "ACTIVE":
+                ssl_str = f"{GREEN}✓ ACTIVE{RESET}"
+            elif ssl_status == "PROVISIONING":
+                ssl_str = f"{YELLOW}⚠ PROVISIONING ({domain_status}){RESET}"
+            else:
+                ssl_str = f"{RED}✗ {ssl_status} ({domain_status}){RESET}"
+            print(f"  + SSL Cert: {ssl_str}")
+            
+    except Exception:
+        print(f"  {YELLOW}⚠ Ingress not yet configured or state missing.{RESET}")
 
     print(f"\n{BOLD}GCP LABELS:{RESET}")
     print(f"  apigee-tf: {CYAN}{name}{RESET}")

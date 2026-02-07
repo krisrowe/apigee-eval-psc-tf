@@ -4,8 +4,15 @@ variable "gcp_project_id" {
 }
 
 variable "domain_name" {
-  description = "The domain name for the Apigee Ingress Load Balancer."
+  description = "The domain name for the Apigee Ingress Load Balancer. If not provided, will be auto-derived from project_nickname and default_root_domain config."
   type        = string
+  default     = null
+}
+
+variable "default_root_domain" {
+  description = "The default root domain for auto-deriving hostnames (passed from global CLI settings)."
+  type        = string
+  default     = null
 }
 
 variable "apigee_analytics_region" {

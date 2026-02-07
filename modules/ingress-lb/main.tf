@@ -4,12 +4,17 @@ resource "google_compute_global_address" "lb_ip" {
 }
 
 resource "google_compute_managed_ssl_certificate" "lb_cert" {
+  count   = var.domain_name != null ? 1 : 0
   project = var.project_id
-  name    = "${var.name}-cert"
+  name    = "${var.name}-cert-${substr(md5(var.domain_name), 0, 8)}"
   managed {
     domains = [var.domain_name]
   }
+  lifecycle {
+    create_before_destroy = true
+  }
 }
+
 
 resource "google_compute_health_check" "lb_health_check" {
   project = var.project_id
@@ -31,7 +36,12 @@ resource "google_compute_region_network_endpoint_group" "psc_neg" {
   psc_target_service    = var.service_attachment
   region                = var.region
   network               = var.network
+
+  lifecycle {
+    ignore_changes = [subnetwork]
+  }
 }
+
 
 resource "google_compute_backend_service" "lb_backend" {
   project               = var.project_id
@@ -54,16 +64,18 @@ resource "google_compute_url_map" "lb_url_map" {
 }
 
 resource "google_compute_target_https_proxy" "lb_proxy" {
+  count            = var.domain_name != null ? 1 : 0
   project          = var.project_id
   name             = "${var.name}-https-proxy"
   url_map          = google_compute_url_map.lb_url_map.id
-  ssl_certificates = [google_compute_managed_ssl_certificate.lb_cert.id]
+  ssl_certificates = [google_compute_managed_ssl_certificate.lb_cert[0].id]
 }
 
 resource "google_compute_global_forwarding_rule" "lb_forwarding_rule" {
+  count                 = var.domain_name != null ? 1 : 0
   project               = var.project_id
   name                  = "${var.name}-forwarding-rule"
-  target                = google_compute_target_https_proxy.lb_proxy.id
+  target                = google_compute_target_https_proxy.lb_proxy[0].id
   ip_address            = google_compute_global_address.lb_ip.address
   port_range            = "443"
   load_balancing_scheme = "EXTERNAL_MANAGED"

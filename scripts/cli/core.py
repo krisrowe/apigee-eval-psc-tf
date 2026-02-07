@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import sys
 import subprocess
+import socket
 
 # XDG Paths
 XDG_CONFIG_HOME = Path.home() / ".config" / "apigee-tf"
@@ -9,20 +10,44 @@ CONFIG_ROOT = XDG_CONFIG_HOME / "projects"
 STATE_ROOT = Path.home() / ".local" / "share" / "apigee-tf" / "states"
 SETTINGS_FILE = XDG_CONFIG_HOME / "settings.json"
 
-def api_get(path):
+def api_get(path, project_name=None):
     """Helper to call Apigee API via curl + gcloud auth."""
-    url = f"https://apigee.googleapis.com/v1/{path}"
+    base_url = "https://apigee.googleapis.com/v1"
+    
+    if project_name:
+        vars_dict = load_vars(project_name)
+        cp_loc = vars_dict.get("control_plane_location")
+        if cp_loc:
+            base_url = f"https://{cp_loc}-apigee.googleapis.com/v1"
+
+    url = f"{base_url}/{path}"
+    print(f"  [DEBUG] Calling API: {url}")
     try:
         # Using shell invocation for $(...) access token expansion
-        cmd = f"curl -s -H \"Authorization: Bearer $(gcloud auth print-access-token)\" {url}"
+        cmd = f"curl -s -i -H \"Authorization: Bearer $(gcloud auth print-access-token)\" \"{url}\""
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        print(f"  [DEBUG] Exit Code: {res.returncode}")
         if res.returncode == 0 and res.stdout.strip():
+            # Split headers and body (handle both \r\n and \n)
+            delimiter = '\r\n\r\n' if '\r\n\r\n' in res.stdout else '\n\n'
+            parts = res.stdout.split(delimiter, 1)
+            body = parts[1] if len(parts) > 1 else res.stdout
+            
+            # Clean up body to find the first '{' for JSON parsing
             try:
-                data = json.loads(res.stdout)
-                if "error" in data:
+                start_index = body.find('{')
+                if start_index != -1:
+                    json_body = body[start_index:]
+                    data = json.loads(json_body)
+                    if "error" in data:
+                        print(f"  [DEBUG] API Error: {data.get('error')}")
+                        return None
+                    return data
+                else:
+                    print(f"  [DEBUG] No JSON object found in response body: {body[:100]}")
                     return None
-                return data
             except json.JSONDecodeError:
+                print(f"  [DEBUG] Failed to decode JSON from body: {body[:100]}")
                 return None
     except Exception:
         return None
@@ -79,6 +104,42 @@ def load_tfstate(name):
         except json.JSONDecodeError:
             # Empty or invalid state file -> treat as not applied
             return None
-        except Exception as e:
-            print(f"Warning: Failed to load {state_file}: {e}")
     return None
+
+def check_dns(hostname):
+    """Check if the hostname resolves via DNS."""
+    try:
+        ip = socket.gethostbyname(hostname)
+        return True, ip
+    except socket.gaierror:
+        return False, None
+
+def check_ssl(project_id, hostname):
+    """Check the status of Google-managed SSL certificates."""
+    try:
+        # List all global SSL certificates and find the one matching our domain
+        result = subprocess.run(
+            ["gcloud", "compute", "ssl-certificates", "list", "--project", project_id, "--global", "--format=json"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return "UNKNOWN", f"Error querying gcloud: {result.stderr}"
+        
+        certs = json.loads(result.stdout)
+        # Find certificates that include our hostname in their 'managed' domains
+        relevant_certs = [
+            c for c in certs 
+            if c.get("managed", {}).get("domains") and hostname in c["managed"]["domains"]
+        ]
+        
+        if not relevant_certs:
+            return "NOT_FOUND", "No managed SSL certificate found for this domain."
+            
+        # Get the latest one
+        cert = relevant_certs[0]
+        status = cert.get("managed", {}).get("status", "UNKNOWN")
+        domain_status = cert.get("managed", {}).get("domainStatus", {}).get(hostname, "UNKNOWN")
+        
+        return status, domain_status
+    except Exception as e:
+        return "ERROR", str(e)

@@ -20,3 +20,5 @@ __pycache__/
 weather-api.zip
 server.key
 server.crt
+*.txt
+schema.json

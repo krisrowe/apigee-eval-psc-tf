@@ -12,6 +12,7 @@ from scripts.cli.commands.show import cmd_show
 from scripts.cli.commands.import_ import cmd_import
 from scripts.cli.commands.terraform import run_terraform
 from scripts.cli.commands.config import cmd_config
+from scripts.cli.commands.apis import cmd_apis
 
 def main():
     parser = argparse.ArgumentParser(description="Apigee Terraform Multi-Env Utility")
@@ -40,7 +41,40 @@ def main():
     getter = conf_sub.add_parser("get")
     getter.add_argument("key", nargs="?")
 
-    conf_sub.add_parser("list")
+    conf_sub.add_parser("show", help="Show all available settings with descriptions")
+    conf_sub.add_parser("reset", help="Clear all settings")
+
+    # APIs command
+    apis = subparsers.add_parser("apis")
+    apis_sub = apis.add_subparsers(dest="action", required=True)
+    
+    list_p = apis_sub.add_parser("list")
+    list_p.add_argument("name", help="Project alias")
+    
+    import_p = apis_sub.add_parser("import")
+    import_p.add_argument("name", help="Project alias (e.g., ca-drz-payg)")
+    import_p.add_argument("--proxy-name", required=True, help="API proxy name")
+    import_p.add_argument("--bundle", required=True, help="Path to proxy bundle directory or zip file")
+    import_p.add_argument("--output-json", action="store_true", help="Output JSON for scripting")
+    
+    deploy_p = apis_sub.add_parser("deploy")
+    deploy_p.add_argument("name", help="Project alias (e.g., ca-drz-payg)")
+    deploy_p.add_argument("--proxy-name", required=True, help="API proxy name")
+    deploy_p.add_argument("--revision", required=True, help="Revision number to deploy")
+    deploy_p.add_argument("--environment", default="dev", help="Environment to deploy to (default: dev)")
+    
+    undeploy_p = apis_sub.add_parser("undeploy")
+    undeploy_p.add_argument("name", help="Project alias (e.g., ca-drz-payg)")
+    undeploy_p.add_argument("--proxy-name", required=True, help="API proxy name")
+    undeploy_p.add_argument("--revision", required=True, help="Revision number to undeploy")
+    undeploy_p.add_argument("--environment", default="dev", help="Environment to undeploy from (default: dev)")
+    
+    test_p = apis_sub.add_parser("test")
+    test_p.add_argument("name", help="Project alias (e.g., ca-drz-payg)")
+    test_p.add_argument("--proxy-name", required=True, help="API proxy name")
+    test_p.add_argument("--bundle", required=True, help="Path to proxy bundle directory (contains apiproxy/ and tests/)")
+    test_p.add_argument("--environment", default="dev", help="Environment to test against (default: dev)")
+    test_p.add_argument("--test-file", help="Specific test file to run (optional, runs all if not specified)")
 
     for action in ["plan", "apply", "destroy", "refresh", "output", "init"]:
         p = subparsers.add_parser(action)
@@ -52,6 +86,7 @@ def main():
     elif args.command == "show": cmd_show(args)
     elif args.command == "import": cmd_import(args)
     elif args.command == "config": cmd_config(args)
+    elif args.command == "apis": cmd_apis(args)
     elif args.command in ["plan", "apply", "destroy", "refresh", "output", "init"]:
         run_terraform(args.command, args.name, args.extra_args)
     else: parser.print_help()

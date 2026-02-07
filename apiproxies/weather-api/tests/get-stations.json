@@ -1,0 +1,10 @@
+{
+    "name": "Get weather stations",
+    "request": {
+        "method": "GET",
+        "path": "/"
+    },
+    "expect": {
+        "status": 200
+    }
+}

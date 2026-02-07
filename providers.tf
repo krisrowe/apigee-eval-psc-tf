@@ -1,9 +1,13 @@
 terraform {
   required_version = ">= 1.5"
-  
+
   required_providers {
     google = {
       source  = "hashicorp/google"
+      version = "~> 6.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
       version = "~> 6.0"
     }
     archive = {
@@ -24,7 +28,15 @@ locals {
 
 provider "google" {
   project = var.gcp_project_id
-  
+
+  # Data Residency Zone (DRZ): Use regional control plane if specified
+  # When empty, this attribute is omitted and the global endpoint is used
+  apigee_custom_endpoint = local.apigee_endpoint != "" ? local.apigee_endpoint : null
+}
+
+provider "google-beta" {
+  project = var.gcp_project_id
+
   # Data Residency Zone (DRZ): Use regional control plane if specified
   # When empty, this attribute is omitted and the global endpoint is used
   apigee_custom_endpoint = local.apigee_endpoint != "" ? local.apigee_endpoint : null

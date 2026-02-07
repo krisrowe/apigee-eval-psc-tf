@@ -5,7 +5,7 @@
     </Response>
   </PreFlow>
   <HTTPProxyConnection>
-    <BasePath>weather/v3/stations</BasePath>
+    <BasePath>/weather/v3/stations</BasePath>
   </HTTPProxyConnection>
   <RouteRule name="backend">
     <TargetEndpoint>backend</TargetEndpoint>

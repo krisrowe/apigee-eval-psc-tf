@@ -148,9 +148,30 @@ This architecture is secure, private, and does not require VPC Peering peering l
 
 ## CLI Utility (`./util`)
 
-Wrapper around Terraform to manage multi-project state/config.
+Wrapper around Terraform and GCP APIs to manage multi-project state/config.
 
--   `./util list` - List configured projects.
--   `./util import <alias>` - Setup or Import project configuration.
--   `./util plan <alias>` - Dry run / Validation.
--   `./util apply <alias>` - Deploy infrastructure.
+### Configuration
+-   `./util config show` - Show all available settings with descriptions.
+-   `./util config set <key> <value>` - Set a global CLI setting (e.g., `default_root_domain`).
+-   `./util config get` - View current global settings.
+
+### Infrastructure
+-   `./util import <alias> --project <id>` - Setup or Import project configuration.
+-   `./util init <alias>` - Initialize Terraform backend.
+-   `./util plan/apply <alias>` - Manage core infrastructure.
+-   `./util show <alias>` - **Total Status!** Shows local config, live Apigee resources (Org/Instance), and Ingress readiness (DNS/SSL status).
+
+### API Management
+-   `./util apis list <alias>` - List API proxies.
+-   `./util apis import <alias> --proxy-name <name> --bundle <path>` - Import a proxy bundle.
+-   `./util apis deploy <alias> --proxy-name <name> --revision <rev>` - Deploy to an environment.
+-   `./util apis test <alias> --proxy-name <name> --bundle <path>` - **New!** Run integration tests with automatic infrastructure readiness checks.
+
+---
+
+## Hostname Fallback Logic
+
+The system uses a three-tier fallback for environment group hostnames:
+1.  **Tier 1 (Explicit)**: `domain_name` in `$HOME/.config/apigee-tf/projects/<alias>.tfvars`.
+2.  **Tier 2 (Auto-derived)**: `{project_nickname}.{default_root_domain}` (from global config).
+3.  **Tier 3 (IP-only)**: Fallback to IP with a warning if no domain is configured.
