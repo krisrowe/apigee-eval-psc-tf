@@ -112,6 +112,7 @@ terraform {{
             "domain_name": self.config.network.domain or "",
             "project_nickname": self.config.project.nickname,
             "control_plane_location": self.config.apigee.control_plane_location,
+            "apigee_billing_type": self.config.apigee.billing_type,
         }
         
         # Only include consumer_data_region if set (DRZ mode)

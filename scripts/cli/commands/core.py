@@ -70,6 +70,7 @@ def apply(ctx, auto_approve):
         cmd = ["apply"]
         if auto_approve:
             cmd.append("-auto-approve")
+        cmd.append("-lock=false")
             
         # For apply, we construct the command slightly differently to handle arguments
         terraform_bin = shutil.which("terraform")

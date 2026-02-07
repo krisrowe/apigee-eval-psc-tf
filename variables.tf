@@ -43,3 +43,8 @@ variable "consumer_data_region" {
   type        = string
   default     = ""
 }
+variable "apigee_billing_type" {
+  description = "The billing type for the Apigee organization (e.g., 'PAYG' or 'EVALUATION')."
+  type        = string
+  default     = "PAYG"
+}

@@ -33,7 +33,7 @@ resource "null_resource" "hostname_warning" {
 
 resource "null_resource" "project_label" {
   provisioner "local-exec" {
-    command = "gcloud projects update ${var.gcp_project_id} --update-labels=apigee-tf=${var.project_nickname}"
+    command = "gcloud alpha projects update ${var.gcp_project_id} --update-labels=apigee-tf=${var.project_nickname}"
   }
 }
 
@@ -85,8 +85,8 @@ resource "google_apigee_organization" "apigee_org" {
 
   runtime_type = "CLOUD"
 
-  # HARDCODED AS REQUESTED
-  billing_type = "PAYG"
+  # Use variable instead of hardcoded PAYG
+  billing_type = var.apigee_billing_type
 
   disable_vpc_peering = true
 
