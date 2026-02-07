@@ -22,3 +22,8 @@ server.key
 server.crt
 *.txt
 schema.json
+*.egg-info/
+sandbox/
+verification_test/
+apigee.toml
+temp/

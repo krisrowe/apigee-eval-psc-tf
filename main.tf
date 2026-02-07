@@ -76,10 +76,12 @@ resource "google_compute_network" "apigee_network" {
 
 resource "google_apigee_organization" "apigee_org" {
   project_id       = var.gcp_project_id
-  analytics_region = var.control_plane_location != null && var.control_plane_location != "" ? "" : var.apigee_analytics_region
+  
+  # For DRZ: analytics_region must be null (not set), use api_consumer_data_location instead
+  analytics_region = var.control_plane_location != "" ? null : var.apigee_analytics_region
 
-  # Dynamic Data Location Logic
-  api_consumer_data_location = var.control_plane_location != null && var.control_plane_location != "" ? var.apigee_analytics_region : null
+  # DRZ only: Set consumer data location
+  api_consumer_data_location = var.consumer_data_region != "" ? var.consumer_data_region : null
 
   runtime_type = "CLOUD"
 

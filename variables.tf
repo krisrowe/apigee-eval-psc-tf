@@ -37,3 +37,9 @@ variable "control_plane_location" {
   type        = string
   default     = ""
 }
+
+variable "consumer_data_region" {
+  description = "The consumer data region for DRZ (e.g., 'northamerica-northeast1'). Used instead of analytics_region when DRZ is enabled."
+  type        = string
+  default     = ""
+}

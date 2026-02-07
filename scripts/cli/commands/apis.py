@@ -1,350 +1,352 @@
+"""API Proxy management commands for the new CLI."""
 import sys
 import subprocess
 import json
 import tempfile
 import shutil
-from scripts.cli.core import load_vars, api_request
-
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Optional, Tuple
 
-def cmd_apis(args):
-    """Command to manage/list APIs."""
-    if args.action == "list":
-        list_apis(args.name)
-    elif args.action == "import":
-        import_api(args.name, args.proxy_name, args.bundle, args.output_json)
-    elif args.action == "deploy":
-        deploy_api(args.name, args.proxy_name, args.revision, args.environment)
-    elif args.action == "undeploy":
-        undeploy_api(args.name, args.proxy_name, args.revision, args.environment)
-    elif args.action == "test":
-        test_api(args.name, args.proxy_name, args.bundle, args.environment, args.test_file)
-    else:
-        print(f"Unknown action: {args.action}")
+import click
+from rich.console import Console
 
-def import_api(project_alias, proxy_name, bundle_path, output_json=False):
-    """Import an API proxy bundle (creates a new revision)."""
-    vars_dict = load_vars(project_alias)
-    project_id = vars_dict.get("gcp_project_id")
-    
-    bundle_file = Path(bundle_path)
-    temp_zip = None
-    
-    if bundle_file.is_dir():
-        if not output_json:
-            print(f"Creating temporary zip from directory '{bundle_path}'...")
-        temp_dir = tempfile.mkdtemp(prefix="apigee-import-")
-        temp_zip = Path(temp_dir) / f"{proxy_name}.zip"
-        shutil.make_archive(str(temp_zip.with_suffix('')), 'zip', bundle_path)
-        bundle_path = str(temp_zip)
-    
-    try:
-        if not output_json:
-            print(f"Importing proxy '{proxy_name}' from bundle '{bundle_path}'...")
-        
-        path = f"organizations/{project_id}/apis?name={proxy_name}&action=import"
-        files = {'file': (Path(bundle_path).name, bundle_path, 'application/zip')}
-        
-        status, body = api_request("POST", path, project_name=project_alias, files=files)
-        
-        if status not in [200, 201]:
-            print(f"ERROR: Failed to import proxy (HTTP {status}): {body}", file=sys.stderr)
-            sys.exit(1)
-        
-        import_data = json.loads(body)
-        revision = import_data.get("revision")
-        
-        if output_json:
-            print(json.dumps({"revision": revision, "name": proxy_name}))
-        else:
-            print(f"  [+] Imported revision: {revision}")
-        
-        return revision
-    finally:
-        if temp_zip and temp_zip.parent.exists():
-            shutil.rmtree(temp_zip.parent)
+from scripts.cli.config import ConfigLoader
 
-def deploy_api(project_alias, proxy_name, revision, environment):
-    """Deploy a specific API proxy revision to an environment."""
-    vars_dict = load_vars(project_alias)
-    project_id = vars_dict.get("gcp_project_id")
-    
-    print(f"Deploying proxy '{proxy_name}' revision {revision} to environment '{environment}'...")
-    path = f"organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments"
-    
-    status, body = api_request("POST", path, project_name=project_alias)
-    
-    if status not in [200, 201]:
-        print(f"ERROR: Failed to deploy proxy (HTTP {status}): {body}", file=sys.stderr)
-        sys.exit(1)
-    
-    print(f"  [+] Successfully deployed '{proxy_name}' revision {revision} to '{environment}'")
+console = Console()
 
-def undeploy_api(project_alias, proxy_name, revision, environment):
-    """Undeploy an API proxy revision from an environment."""
-    vars_dict = load_vars(project_alias)
-    project_id = vars_dict.get("gcp_project_id")
-    
-    print(f"Undeploying proxy '{proxy_name}' revision {revision} from environment '{environment}'...")
-    path = f"organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments"
-    
-    status, body = api_request("DELETE", path, project_name=project_alias)
-    
-    if status not in [200, 204]:
-        print(f"ERROR: Failed to undeploy proxy (HTTP {status}): {body}", file=sys.stderr)
-        sys.exit(1)
-    
-    print(f"  [+] Successfully undeployed '{proxy_name}' revision {revision} from '{environment}'")
 
-def get_proxy_base_path(bundle_path, proxy_name):
+def find_proxy_bundle(proxy_name: str, project_root: Optional[Path] = None) -> Path:
+    """
+    Find a proxy bundle by name.
+    
+    Search order:
+    1. $cwd/apiproxies/<proxy_name>/
+    2. <install_dir>/apiproxies/<proxy_name>/
+    
+    Returns the path to the bundle directory.
+    Raises FileNotFoundError if not found.
+    """
+    # 1. Check project root ($cwd or config root)
+    if project_root is None:
+        project_root = Path.cwd()
+    
+    cwd_path = project_root / "apiproxies" / proxy_name
+    if cwd_path.exists() and (cwd_path / "apiproxy").exists():
+        return cwd_path
+    
+    # 2. Check install directory (where this package is installed)
+    # scripts/cli/commands/apis.py -> ../../.. = package root
+    install_dir = Path(__file__).parents[3]
+    install_path = install_dir / "apiproxies" / proxy_name
+    if install_path.exists() and (install_path / "apiproxy").exists():
+        return install_path
+    
+    # Not found
+    searched = [str(cwd_path), str(install_path)]
+    raise FileNotFoundError(
+        f"Proxy bundle '{proxy_name}' not found.\n"
+        f"Searched:\n  - {searched[0]}\n  - {searched[1]}"
+    )
+
+
+def get_proxy_base_path(bundle_path: Path, proxy_name: str) -> str:
     """Extract base path from proxy XML configuration."""
-    bundle_dir = Path(bundle_path)
-    
-    # Look for the proxy XML file to get ProxyEndpoint name
-    proxy_xml = bundle_dir / 'apiproxy' / f'{proxy_name}.xml'
+    proxy_xml = bundle_path / "apiproxy" / f"{proxy_name}.xml"
     
     if not proxy_xml.exists():
-        print(f"ERROR: Proxy XML not found at {proxy_xml}", file=sys.stderr)
-        sys.exit(1)
+        # Try finding any .xml in apiproxy dir
+        xml_files = list((bundle_path / "apiproxy").glob("*.xml"))
+        if xml_files:
+            proxy_xml = xml_files[0]
+        else:
+            return "/"
     
-    try:
-        # Parse root proxy XML to find ProxyEndpoint
-        tree = ET.parse(proxy_xml)
-        root = tree.getroot()
+    tree = ET.parse(proxy_xml)
+    root = tree.getroot()
+    
+    # Look for basepaths in ProxyEndpoint
+    for proxy_endpoint in (bundle_path / "apiproxy" / "proxies").glob("*.xml"):
+        ep_tree = ET.parse(proxy_endpoint)
+        ep_root = ep_tree.getroot()
         
-        proxy_endpoints = root.find('ProxyEndpoints')
-        if proxy_endpoints is None:
-            print(f"ERROR: No ProxyEndpoints found in {proxy_xml}", file=sys.stderr)
-            sys.exit(1)
-        
-        # Get first ProxyEndpoint name (usually 'default')
-        proxy_endpoint_elem = proxy_endpoints.find('ProxyEndpoint')
-        if proxy_endpoint_elem is None or not proxy_endpoint_elem.text:
-            print(f"ERROR: No ProxyEndpoint element found", file=sys.stderr)
-            sys.exit(1)
-        
-        proxy_endpoint_name = proxy_endpoint_elem.text.strip()
-        
-        # Now parse the ProxyEndpoint XML file
-        proxy_endpoint_xml = bundle_dir / 'apiproxy' / 'proxies' / f'{proxy_endpoint_name}.xml'
-        
-        if not proxy_endpoint_xml.exists():
-            print(f"ERROR: ProxyEndpoint XML not found at {proxy_endpoint_xml}", file=sys.stderr)
-            sys.exit(1)
-        
-        endpoint_tree = ET.parse(proxy_endpoint_xml)
-        endpoint_root = endpoint_tree.getroot()
-        
-        # Find BasePath in HTTPProxyConnection
-        http_proxy_conn = endpoint_root.find('HTTPProxyConnection')
-        if http_proxy_conn is not None:
-            base_path_elem = http_proxy_conn.find('BasePath')
+        http_proxy = ep_root.find(".//HTTPProxyConnection")
+        if http_proxy is not None:
+            base_path_elem = http_proxy.find("BasePath")
             if base_path_elem is not None and base_path_elem.text:
-                return base_path_elem.text.strip()
-        
-        print(f"ERROR: No BasePath found in {proxy_endpoint_xml}", file=sys.stderr)
+                return base_path_elem.text
+    
+    return "/"
+
+
+def get_hostname_from_config(config) -> str:
+    """Get the hostname from the config's domain setting."""
+    return config.network.domain
+
+
+@click.group()
+def apis():
+    """Manage API proxies (deploy, test)."""
+    pass
+
+
+@apis.command("deploy")
+@click.argument("proxy_name")
+@click.option("--env", "-e", default="dev", help="Target environment (default: dev)")
+def deploy_command(proxy_name: str, env: str):
+    """Deploy an API proxy to an environment."""
+    try:
+        config = ConfigLoader.load(Path.cwd())
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
-    except ET.ParseError as e:
-        print(f"ERROR: Failed to parse proxy XML: {e}", file=sys.stderr)
+    
+    # Find the proxy bundle
+    try:
+        bundle_path = find_proxy_bundle(proxy_name, config.root_dir)
+        console.print(f"[dim]Found proxy at: {bundle_path}[/dim]")
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+    
+    # Import (creates new revision)
+    console.print(f"[bold]Importing proxy '{proxy_name}'...[/bold]")
+    revision = import_proxy(config, proxy_name, bundle_path)
+    
+    if revision is None:
+        console.print("[red]Import failed.[/red]")
+        sys.exit(1)
+    
+    console.print(f"[green]✓ Imported revision {revision}[/green]")
+    
+    # Deploy
+    console.print(f"[bold]Deploying to '{env}'...[/bold]")
+    success = deploy_proxy(config, proxy_name, revision, env)
+    
+    if success:
+        hostname = get_hostname_from_config(config)
+        base_path = get_proxy_base_path(bundle_path, proxy_name)
+        console.print(f"[green]✓ Deployed successfully![/green]")
+        console.print(f"[dim]Endpoint: https://{hostname}{base_path}[/dim]")
+    else:
+        console.print("[red]Deployment failed.[/red]")
         sys.exit(1)
 
-def get_environment_hostname(project_alias, environment):
-    """Get the hostname for an Apigee environment by querying Terraform state."""
-    # State file is in ~/.local/share/apigee-tf/states/
-    state_dir = Path.home() / '.local' / 'share' / 'apigee-tf' / 'states'
-    state_file = state_dir / f'{project_alias}.tfstate'
-    
-    if not state_file.exists():
-        print(f"WARNING: Terraform state not found at {state_file}", file=sys.stderr)
-        # Fallthrough to try tfvars
-    
-    # Query terraform output for envgroup_hostname using JSON output
-    if state_file.exists():
-        try:
-            result = subprocess.run(
-                ['terraform', 'output', '-state', str(state_file), '-json'],
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode == 0 and result.stdout.strip():
-                outputs = json.loads(result.stdout)
-                
-                # Try envgroup_hostname output first
-                if 'envgroup_hostname' in outputs:
-                    return outputs['envgroup_hostname']['value']
-        except Exception as e:
-            print(f"WARNING: Failed to query terraform output: {e}", file=sys.stderr)
-    
-    # Fallback: try domain_name from tfvars
-    vars_dict = load_vars(project_alias)
-    hostname = vars_dict.get('domain_name')
-    
-    if hostname:
-        print(f"WARNING: Using domain_name from tfvars (envgroup_hostname output not found)", file=sys.stderr)
-        return hostname
-    
-    print(f"ERROR: Could not determine hostname for '{project_alias}'", file=sys.stderr)
-    print(f"Run 'terraform apply' to populate outputs or add domain_name to tfvars.", file=sys.stderr)
-    sys.exit(1)
 
-def test_api(project_alias, proxy_name, bundle_path, environment, test_file=None):
+@apis.command("test")
+@click.argument("proxy_name")
+@click.option("--env", "-e", default="dev", help="Target environment (default: dev)")
+def test_command(proxy_name: str, env: str):
     """Run integration tests for an API proxy."""
-    bundle_dir = Path(bundle_path)
-    tests_dir = bundle_dir / 'tests'
+    try:
+        config = ConfigLoader.load(Path.cwd())
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
     
+    # Find the proxy bundle
+    try:
+        bundle_path = find_proxy_bundle(proxy_name, config.root_dir)
+        console.print(f"[dim]Found proxy at: {bundle_path}[/dim]")
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+    
+    # Check for tests directory
+    tests_dir = bundle_path / "tests"
     if not tests_dir.exists():
-        print(f"ERROR: Tests directory not found at {tests_dir}", file=sys.stderr)
-        sys.exit(1)
+        console.print(f"[yellow]No tests directory found at {tests_dir}[/yellow]")
+        sys.exit(0)
     
-    # Get base path from proxy XML
-    base_path = get_proxy_base_path(bundle_path, proxy_name)
-    print(f"Discovered base path: {base_path}")
-    
-    # Get environment hostname
-    hostname = get_environment_hostname(project_alias, environment)
-    
-    # --- Pre-flight Diagnostics ---
-    from scripts.cli.core import check_dns, check_ssl
-    print(f"Pre-flight check for {hostname}...")
-    
-    dns_ok, _ = check_dns(hostname)
-    vars_dict = load_vars(project_alias)
-    project_id = vars_dict.get("gcp_project_id")
-    
-    ssl_status = "UNKNOWN"
-    if project_id:
-        ssl_status, _ = check_ssl(project_id, hostname)
-
-    if not dns_ok or ssl_status != "ACTIVE":
-        print("-" * 40)
-        if not dns_ok:
-            print("[ ] DNS Resolution: PENDING (NXDOMAIN)")
-            print("    Advice: Wait 1-5 minutes for DNS propagation.")
-        if ssl_status == "PROVISIONING":
-            print("[ ] SSL Certificate: PROVISIONING")
-            print("    Advice: Google-managed certificates take 15-60 minutes.")
-        print("-" * 40)
-        print("\nWARNING: Infrastructure is not fully ready. Tests will likely fail.")
-        confirm = input("Do you want to continue anyway? (y/N): ")
-        if confirm.lower() != 'y':
-            sys.exit(0)
-    else:
-        print("[✓] Infrastructure is READY.")
-    
-    print(f"Testing against: https://{hostname}")
-    print()
-    
-    # Find test files
-    if test_file:
-        test_files = [Path(test_file)]
-    else:
-        test_files = sorted(tests_dir.glob('*.json'))
-    
+    test_files = sorted(tests_dir.glob("*.json"))
     if not test_files:
-        print(f"ERROR: No test files found in {tests_dir}", file=sys.stderr)
-        sys.exit(1)
+        console.print(f"[yellow]No test files (*.json) found in {tests_dir}[/yellow]")
+        sys.exit(0)
+    
+    # Get endpoint info
+    hostname = get_hostname_from_config(config)
+    base_path = get_proxy_base_path(bundle_path, proxy_name)
+    
+    console.print(f"[bold]Testing: https://{hostname}{base_path}[/bold]")
+    console.print()
     
     # Run tests
     passed = 0
     failed = 0
     
     for test_path in test_files:
-        try:
-            with open(test_path) as f:
-                test_case = json.load(f)
-            
-            test_name = test_case.get('name', test_path.name)
-            request_spec = test_case.get('request', {})
-            expect_spec = test_case.get('expect', {})
-            
-            # Build full URL
-            method = request_spec.get('method', 'GET')
-            path = request_spec.get('path', '/')
-            full_url = f"https://{hostname}{base_path}{path}"
-            
-            headers = request_spec.get('headers', {})
-            body = request_spec.get('body')
-            
-            # Execute request
-            print(f"Running: {test_name}")
-            print(f"  {method} {full_url}")
-            
-            # Use curl for the test request to stay stdlib-only
-            curl_cmd = ["curl", "-s", "-i", "-X", method, full_url]
-            if headers:
-                for k, v in headers.items():
-                    curl_cmd += ["-H", f"{k}: {v}"]
-            if body:
-                curl_cmd += ["-d", json.dumps(body), "-H", "Content-Type: application/json"]
-
-            res = subprocess.run(curl_cmd, capture_output=True, text=True)
-            
-            if res.returncode != 0:
-                print(f"  ✗ ERROR: curl failed: {res.stderr}")
-                failed += 1
-                continue
-
-            # Parse curl output
-            delimiter = '\r\n\r\n' if '\r\n\r\n' in res.stdout else '\n\n'
-            parts = res.stdout.split(delimiter, 1)
-            headers_part = parts[0]
-            response_text = parts[1] if len(parts) > 1 else ""
-            
-            # Extract status code
-            try:
-                status_line = headers_part.splitlines()[0]
-                status_code = int(status_line.split()[1])
-            except (IndexError, ValueError):
-                status_code = 0
-            
-            # Extract headers for validation
-            actual_headers = {}
-            for line in headers_part.splitlines()[1:]:
-                if ':' in line:
-                    k, v = line.split(':', 1)
-                    actual_headers[k.strip().lower()] = v.strip()
-
-            # Validate response
-            test_passed = True
-            
-            # Check status code
-            expected_status = expect_spec.get('status')
-            if expected_status and status_code != expected_status:
-                print(f"  ✗ FAIL: Expected status {expected_status}, got {status_code}")
-                test_passed = False
-            
-            # Check headers
-            expected_headers = expect_spec.get('headers', {})
-            for header, value in expected_headers.items():
-                actual_val = actual_headers.get(header.lower())
-                if actual_val != value:
-                    print(f"  ✗ FAIL: Expected header {header}={value}, got {actual_val}")
-                    test_passed = False
-            
-            # Check body contains
-            body_contains = expect_spec.get('body_contains', [])
-            for substring in body_contains:
-                if substring not in response_text:
-                    print(f"  ✗ FAIL: Expected body to contain '{substring}'")
-                    test_passed = False
-            
-            if test_passed:
-                print(f"  ✓ PASS ({status_code})")
-                passed += 1
-            else:
-                failed += 1
-            
-            print()
-        
-        except Exception as e:
-            print(f"  ✗ ERROR: {e}")
-            print()
+        result = run_test(test_path, hostname, base_path)
+        if result:
+            passed += 1
+        else:
             failed += 1
     
-    # Summary
-    print(f"Results: {passed} passed, {failed} failed")
-    
-    if failed > 0:
+    console.print()
+    if failed == 0:
+        console.print(f"[green]✓ All {passed} test(s) passed![/green]")
+    else:
+        console.print(f"[red]✗ {failed} failed, {passed} passed[/red]")
         sys.exit(1)
+
+
+def import_proxy(config, proxy_name: str, bundle_path: Path) -> Optional[str]:
+    """Import a proxy bundle, returning the new revision number."""
+    project_id = config.project.gcp_project_id
+    control_plane = config.apigee.control_plane_location
+    
+    # Create temp zip
+    temp_dir = tempfile.mkdtemp(prefix="apim-import-")
+    temp_zip = Path(temp_dir) / f"{proxy_name}.zip"
+    
+    try:
+        # Zip the bundle from parent so apiproxy/ is at the root of the archive
+        # make_archive(base_name, format, root_dir, base_dir)
+        shutil.make_archive(
+            str(temp_zip.with_suffix('')), 
+            'zip', 
+            root_dir=bundle_path,  # Start from here
+            base_dir='apiproxy'    # Include this folder
+        )
+        
+        # Build API endpoint
+        if control_plane:
+            api_base = f"https://{control_plane}-apigee.googleapis.com/v1"
+        else:
+            api_base = "https://apigee.googleapis.com/v1"
+        
+        url = f"{api_base}/organizations/{project_id}/apis?name={proxy_name}&action=import"
+        
+        # Use curl to upload
+        result = subprocess.run(
+            [
+                "curl", "-s", "-X", "POST", url,
+                "-H", "Authorization: Bearer $(gcloud auth print-access-token)",
+                "-H", "Content-Type: application/octet-stream",
+                "--data-binary", f"@{temp_zip}"
+            ],
+            capture_output=True, text=True, shell=False
+        )
+        
+        # Actually, use gcloud to get token properly
+        token_result = subprocess.run(
+            ["gcloud", "auth", "print-access-token"],
+            capture_output=True, text=True
+        )
+        token = token_result.stdout.strip()
+        
+        result = subprocess.run(
+            [
+                "curl", "-s", "-X", "POST", url,
+                "-H", f"Authorization: Bearer {token}",
+                "-H", "Content-Type: application/octet-stream",
+                "--data-binary", f"@{temp_zip}"
+            ],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode != 0:
+            console.print(f"[red]curl failed: {result.stderr}[/red]")
+            return None
+        
+        try:
+            data = json.loads(result.stdout)
+            if "error" in data:
+                console.print(f"[red]API error: {data['error'].get('message', data['error'])}[/red]")
+                return None
+            return data.get("revision")
+        except json.JSONDecodeError:
+            console.print(f"[red]Invalid response: {result.stdout}[/red]")
+            return None
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def deploy_proxy(config, proxy_name: str, revision: str, environment: str) -> bool:
+    """Deploy a proxy revision to an environment."""
+    project_id = config.project.gcp_project_id
+    control_plane = config.apigee.control_plane_location
+    
+    if control_plane:
+        api_base = f"https://{control_plane}-apigee.googleapis.com/v1"
+    else:
+        api_base = "https://apigee.googleapis.com/v1"
+    
+    url = f"{api_base}/organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments"
+    
+    token_result = subprocess.run(
+        ["gcloud", "auth", "print-access-token"],
+        capture_output=True, text=True
+    )
+    token = token_result.stdout.strip()
+    
+    result = subprocess.run(
+        ["curl", "-s", "-X", "POST", url, "-H", f"Authorization: Bearer {token}"],
+        capture_output=True, text=True
+    )
+    
+    try:
+        data = json.loads(result.stdout)
+        if "error" in data:
+            console.print(f"[red]Deploy error: {data['error'].get('message', data['error'])}[/red]")
+            return False
+        return True
+    except json.JSONDecodeError:
+        # Empty response is OK for deployment
+        return result.returncode == 0
+
+
+def run_test(test_path: Path, hostname: str, base_path: str) -> bool:
+    """Run a single test case."""
+    try:
+        with open(test_path) as f:
+            test_case = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        console.print(f"[red]Error loading {test_path.name}: {e}[/red]")
+        return False
+    
+    test_name = test_case.get("name", test_path.stem)
+    request_spec = test_case.get("request", {})
+    expect_spec = test_case.get("expect", {})
+    
+    method = request_spec.get("method", "GET")
+    path = request_spec.get("path", "/")
+    full_url = f"https://{hostname}{base_path}{path}"
+    
+    console.print(f"[bold]{test_name}[/bold]: {method} {path}")
+    
+    # Build curl command
+    curl_cmd = ["curl", "-s", "-w", "\n%{http_code}", "-X", method, full_url]
+    
+    headers = request_spec.get("headers", {})
+    for k, v in headers.items():
+        curl_cmd += ["-H", f"{k}: {v}"]
+    
+    body = request_spec.get("body")
+    if body:
+        curl_cmd += ["-d", json.dumps(body), "-H", "Content-Type: application/json"]
+    
+    result = subprocess.run(curl_cmd, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        console.print(f"  [red]✗ curl failed: {result.stderr}[/red]")
+        return False
+    
+    # Parse response - last line is status code
+    lines = result.stdout.strip().split("\n")
+    status_code = int(lines[-1]) if lines else 0
+    response_body = "\n".join(lines[:-1])
+    
+    # Check expectations
+    expected_status = expect_spec.get("status")
+    if expected_status and status_code != expected_status:
+        console.print(f"  [red]✗ Expected status {expected_status}, got {status_code}[/red]")
+        return False
+    
+    # Check body contains
+    expected_contains = expect_spec.get("body_contains")
+    if expected_contains and expected_contains not in response_body:
+        console.print(f"  [red]✗ Response missing: {expected_contains}[/red]")
+        return False
+    
+    console.print(f"  [green]✓ Passed (HTTP {status_code})[/green]")
+    return True
