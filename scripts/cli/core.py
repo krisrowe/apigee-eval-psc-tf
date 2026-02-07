@@ -143,3 +143,18 @@ def check_ssl(project_id, hostname):
         return status, domain_status
     except Exception as e:
         return "ERROR", str(e)
+
+def get_nameservers(project_id, zone_name="apigee-dns"):
+    """Fetch assigned name servers for a GCP managed DNS zone."""
+    try:
+        result = subprocess.run(
+            ["gcloud", "dns", "managed-zones", "describe", zone_name, "--project", project_id, "--format=json"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return None
+        
+        data = json.loads(result.stdout)
+        return data.get("nameServers", [])
+    except Exception:
+        return None

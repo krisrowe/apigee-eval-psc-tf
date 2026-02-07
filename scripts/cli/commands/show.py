@@ -1,7 +1,7 @@
 import sys
 import json
 from pathlib import Path
-from scripts.cli.core import get_project_paths, load_tfstate, load_vars, api_get, check_dns, check_ssl
+from scripts.cli.core import get_project_paths, load_tfstate, load_vars, api_get, check_dns, check_ssl, get_nameservers
 
 # ANSI Colors
 RED = '\033[91m'
@@ -116,7 +116,19 @@ def cmd_show(args):
         
         # DNS
         dns_ok, dns_ip = check_dns(hostname)
-        dns_str = f"{GREEN}✓ Resolves to {dns_ip}{RESET}" if dns_ok else f"{YELLOW}⚠ NXDOMAIN (Pending Propagation){RESET}"
+        if dns_ok:
+            dns_str = f"{GREEN}✓ Resolves to {dns_ip}{RESET}"
+        else:
+            dns_str = f"{YELLOW}⚠ NXDOMAIN (Pending Propagation){RESET}"
+            # Surface Name Servers if found in project_id
+            if project_id:
+                ns_list = get_nameservers(project_id)
+                if ns_list:
+                    dns_str += f"\n    {BOLD}Expected Name Servers:{RESET}\n"
+                    for ns in ns_list:
+                        dns_str += f"      - {ns}\n"
+                    dns_str += f"    {YELLOW}→ Update your registrar with these values to fix delegation.{RESET}"
+        
         print(f"  + DNS:      {dns_str}")
         
         # SSL
