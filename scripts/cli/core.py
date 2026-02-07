@@ -10,7 +10,7 @@ CONFIG_ROOT = XDG_CONFIG_HOME / "projects"
 STATE_ROOT = Path.home() / ".local" / "share" / "apigee-tf" / "states"
 SETTINGS_FILE = XDG_CONFIG_HOME / "settings.json"
 
-def api_get(path, project_name=None):
+def api_request(method, path, project_name=None, headers=None, body=None, files=None):
     """Helper to call Apigee API via curl + gcloud auth."""
     base_url = "https://apigee.googleapis.com/v1"
     
@@ -21,37 +21,50 @@ def api_get(path, project_name=None):
             base_url = f"https://{cp_loc}-apigee.googleapis.com/v1"
 
     url = f"{base_url}/{path}"
-    print(f"  [DEBUG] Calling API: {url}")
+    
+    cmd = ["curl", "-s", "-i", "-X", method]
+    cmd += ["-H", f"Authorization: Bearer {subprocess.run(['gcloud', 'auth', 'print-access-token'], capture_output=True, text=True).stdout.strip()}"]
+    
+    if headers:
+        for k, v in headers.items():
+            cmd += ["-H", f"{k}: {v}"]
+            
+    if body:
+        if isinstance(body, (dict, list)):
+            cmd += ["-d", json.dumps(body)]
+            cmd += ["-H", "Content-Type: application/json"]
+        else:
+            cmd += ["-d", str(body)]
+
+    if files:
+        for key, (filename, content, content_type) in files.items():
+            # For simplicity in this env, we write to a temp file if it's not already a file
+            if hasattr(content, 'read'):
+                temp_f = tempfile.NamedTemporaryFile(delete=False)
+                temp_f.write(content.read())
+                temp_f.close()
+                cmd += ["-F", f"{key}=@{temp_f.name};type={content_type}"]
+            else:
+                cmd += ["-F", f"{key}=@{content};type={content_type}"]
+
+    cmd.append(url)
+    
     try:
-        # Using shell invocation for $(...) access token expansion
-        cmd = f"curl -s -i -H \"Authorization: Bearer $(gcloud auth print-access-token)\" \"{url}\""
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        print(f"  [DEBUG] Exit Code: {res.returncode}")
+        res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode == 0 and res.stdout.strip():
-            # Split headers and body (handle both \r\n and \n)
             delimiter = '\r\n\r\n' if '\r\n\r\n' in res.stdout else '\n\n'
             parts = res.stdout.split(delimiter, 1)
-            body = parts[1] if len(parts) > 1 else res.stdout
+            headers_part = parts[0]
+            body_part = parts[1] if len(parts) > 1 else ""
             
-            # Clean up body to find the first '{' for JSON parsing
-            try:
-                start_index = body.find('{')
-                if start_index != -1:
-                    json_body = body[start_index:]
-                    data = json.loads(json_body)
-                    if "error" in data:
-                        print(f"  [DEBUG] API Error: {data.get('error')}")
-                        return None
-                    return data
-                else:
-                    print(f"  [DEBUG] No JSON object found in response body: {body[:100]}")
-                    return None
-            except json.JSONDecodeError:
-                print(f"  [DEBUG] Failed to decode JSON from body: {body[:100]}")
-                return None
-    except Exception:
-        return None
-    return None
+            # Extract status code
+            status_line = headers_part.splitlines()[0]
+            status_code = int(status_line.split()[1])
+            
+            return status_code, body_part
+    except Exception as e:
+        print(f"Error executing curl: {e}", file=sys.stderr)
+    return 500, ""
 
 def load_settings():
     """Load global settings from JSON."""

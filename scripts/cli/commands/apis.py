@@ -3,10 +3,10 @@ import subprocess
 import json
 import tempfile
 import shutil
-import requests
+from scripts.cli.core import load_vars, api_request
+
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from scripts.cli.core import load_vars
 
 def cmd_apis(args):
     """Command to manage/list APIs."""
@@ -23,56 +23,11 @@ def cmd_apis(args):
     else:
         print(f"Unknown action: {args.action}")
 
-def get_access_token():
-    """Get GCP access token using gcloud."""
-    result = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"ERROR: Failed to get access token: {result.stderr}", file=sys.stderr)
-        sys.exit(1)
-    return result.stdout.strip()
-
-def get_base_url(project_alias):
-    """Get the Apigee API base URL for a project."""
-    vars_dict = load_vars(project_alias)
-    project_id = vars_dict.get("gcp_project_id")
-    cp_loc = vars_dict.get("control_plane_location")
-    
-    if not project_id:
-        print(f"ERROR: Could not find project ID for alias '{project_alias}'.", file=sys.stderr)
-        sys.exit(1)
-    
-    base_url = f"https://{cp_loc}-apigee.googleapis.com/v1" if cp_loc else "https://apigee.googleapis.com/v1"
-    return base_url, project_id
-
-def list_apis(project_alias):
-    """List API proxies for a project."""
-    base_url, project_id = get_base_url(project_alias)
-    token = get_access_token()
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    print(f"Listing APIs for project '{project_id}' ({project_alias})...")
-    
-    response = requests.get(f"{base_url}/organizations/{project_id}/apis", headers=headers)
-    
-    if response.status_code != 200:
-        print(f"ERROR: Failed to list APIs (HTTP {response.status_code}): {response.text}", file=sys.stderr)
-        sys.exit(1)
-    
-    data = response.json()
-    proxies = data.get("proxies", [])
-    
-    if not proxies:
-        print("  [+] No API proxies found.")
-    else:
-        print(f"  [+] Found {len(proxies)} API proxy(ies):")
-        for proxy in proxies:
-            print(f"      - {proxy.get('name')}")
-
 def import_api(project_alias, proxy_name, bundle_path, output_json=False):
     """Import an API proxy bundle (creates a new revision)."""
-    base_url, project_id = get_base_url(project_alias)
+    vars_dict = load_vars(project_alias)
+    project_id = vars_dict.get("gcp_project_id")
     
-    # Handle bundle path - if it's a directory, zip it to a temp location
     bundle_file = Path(bundle_path)
     temp_zip = None
     
@@ -81,94 +36,63 @@ def import_api(project_alias, proxy_name, bundle_path, output_json=False):
             print(f"Creating temporary zip from directory '{bundle_path}'...")
         temp_dir = tempfile.mkdtemp(prefix="apigee-import-")
         temp_zip = Path(temp_dir) / f"{proxy_name}.zip"
-        
-        # Create zip archive
         shutil.make_archive(str(temp_zip.with_suffix('')), 'zip', bundle_path)
         bundle_path = str(temp_zip)
-        if not output_json:
-            print(f"  [+] Created temporary bundle: {bundle_path}")
-    elif not bundle_file.exists():
-        print(f"ERROR: Bundle file/directory not found: {bundle_path}", file=sys.stderr)
-        sys.exit(1)
     
     try:
-        # Get access token
-        token = get_access_token()
-        headers = {"Authorization": f"Bearer {token}"}
-        
-        # Import the bundle
         if not output_json:
             print(f"Importing proxy '{proxy_name}' from bundle '{bundle_path}'...")
-        import_url = f"{base_url}/organizations/{project_id}/apis?name={proxy_name}&action=import"
         
-        with open(bundle_path, 'rb') as f:
-            files = {'file': (Path(bundle_path).name, f, 'application/zip')}
-            response = requests.post(import_url, headers=headers, files=files)
+        path = f"organizations/{project_id}/apis?name={proxy_name}&action=import"
+        files = {'file': (Path(bundle_path).name, bundle_path, 'application/zip')}
         
-        if response.status_code not in [200, 201]:
-            print(f"ERROR: Failed to import proxy (HTTP {response.status_code}): {response.text}", file=sys.stderr)
+        status, body = api_request("POST", path, project_name=project_alias, files=files)
+        
+        if status not in [200, 201]:
+            print(f"ERROR: Failed to import proxy (HTTP {status}): {body}", file=sys.stderr)
             sys.exit(1)
         
-        import_data = response.json()
-        if "error" in import_data:
-            print(f"ERROR: API returned error: {import_data['error']}", file=sys.stderr)
-            sys.exit(1)
-        
+        import_data = json.loads(body)
         revision = import_data.get("revision")
         
         if output_json:
-            # Output JSON for scripting
             print(json.dumps({"revision": revision, "name": proxy_name}))
         else:
             print(f"  [+] Imported revision: {revision}")
         
         return revision
-    
     finally:
-        # Clean up temp directory if we created one
         if temp_zip and temp_zip.parent.exists():
             shutil.rmtree(temp_zip.parent)
-            if not output_json:
-                print(f"  [+] Cleaned up temporary files")
 
 def deploy_api(project_alias, proxy_name, revision, environment):
     """Deploy a specific API proxy revision to an environment."""
-    base_url, project_id = get_base_url(project_alias)
-    token = get_access_token()
-    headers = {"Authorization": f"Bearer {token}"}
+    vars_dict = load_vars(project_alias)
+    project_id = vars_dict.get("gcp_project_id")
     
     print(f"Deploying proxy '{proxy_name}' revision {revision} to environment '{environment}'...")
-    deploy_url = f"{base_url}/organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments"
+    path = f"organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments"
     
-    response = requests.post(deploy_url, headers=headers)
+    status, body = api_request("POST", path, project_name=project_alias)
     
-    if response.status_code not in [200, 201]:
-        print(f"ERROR: Failed to deploy proxy (HTTP {response.status_code}): {response.text}", file=sys.stderr)
+    if status not in [200, 201]:
+        print(f"ERROR: Failed to deploy proxy (HTTP {status}): {body}", file=sys.stderr)
         sys.exit(1)
-    
-    try:
-        deploy_data = response.json()
-        if "error" in deploy_data:
-            print(f"ERROR: Deployment failed: {deploy_data['error']}", file=sys.stderr)
-            sys.exit(1)
-    except json.JSONDecodeError:
-        pass  # Some deployments return empty body
     
     print(f"  [+] Successfully deployed '{proxy_name}' revision {revision} to '{environment}'")
 
 def undeploy_api(project_alias, proxy_name, revision, environment):
     """Undeploy an API proxy revision from an environment."""
-    base_url, project_id = get_base_url(project_alias)
-    token = get_access_token()
-    headers = {"Authorization": f"Bearer {token}"}
+    vars_dict = load_vars(project_alias)
+    project_id = vars_dict.get("gcp_project_id")
     
     print(f"Undeploying proxy '{proxy_name}' revision {revision} from environment '{environment}'...")
-    undeploy_url = f"{base_url}/organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments"
+    path = f"organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments"
     
-    response = requests.delete(undeploy_url, headers=headers)
+    status, body = api_request("DELETE", path, project_name=project_alias)
     
-    if response.status_code not in [200, 204]:
-        print(f"ERROR: Failed to undeploy proxy (HTTP {response.status_code}): {response.text}", file=sys.stderr)
+    if status not in [200, 204]:
+        print(f"ERROR: Failed to undeploy proxy (HTTP {status}): {body}", file=sys.stderr)
         sys.exit(1)
     
     print(f"  [+] Successfully undeployed '{proxy_name}' revision {revision} from '{environment}'")
@@ -349,34 +273,60 @@ def test_api(project_alias, proxy_name, bundle_path, environment, test_file=None
             print(f"Running: {test_name}")
             print(f"  {method} {full_url}")
             
-            response = requests.request(
-                method=method,
-                url=full_url,
-                headers=headers,
-                json=body if body else None,
-                verify=True
-            )
+            # Use curl for the test request to stay stdlib-only
+            curl_cmd = ["curl", "-s", "-i", "-X", method, full_url]
+            if headers:
+                for k, v in headers.items():
+                    curl_cmd += ["-H", f"{k}: {v}"]
+            if body:
+                curl_cmd += ["-d", json.dumps(body), "-H", "Content-Type: application/json"]
+
+            res = subprocess.run(curl_cmd, capture_output=True, text=True)
             
+            if res.returncode != 0:
+                print(f"  ✗ ERROR: curl failed: {res.stderr}")
+                failed += 1
+                continue
+
+            # Parse curl output
+            delimiter = '\r\n\r\n' if '\r\n\r\n' in res.stdout else '\n\n'
+            parts = res.stdout.split(delimiter, 1)
+            headers_part = parts[0]
+            response_text = parts[1] if len(parts) > 1 else ""
+            
+            # Extract status code
+            try:
+                status_line = headers_part.splitlines()[0]
+                status_code = int(status_line.split()[1])
+            except (IndexError, ValueError):
+                status_code = 0
+            
+            # Extract headers for validation
+            actual_headers = {}
+            for line in headers_part.splitlines()[1:]:
+                if ':' in line:
+                    k, v = line.split(':', 1)
+                    actual_headers[k.strip().lower()] = v.strip()
+
             # Validate response
             test_passed = True
             
             # Check status code
             expected_status = expect_spec.get('status')
-            if expected_status and response.status_code != expected_status:
-                print(f"  ✗ FAIL: Expected status {expected_status}, got {response.status_code}")
+            if expected_status and status_code != expected_status:
+                print(f"  ✗ FAIL: Expected status {expected_status}, got {status_code}")
                 test_passed = False
             
             # Check headers
             expected_headers = expect_spec.get('headers', {})
             for header, value in expected_headers.items():
-                actual_value = response.headers.get(header)
-                if actual_value != value:
-                    print(f"  ✗ FAIL: Expected header {header}={value}, got {actual_value}")
+                actual_val = actual_headers.get(header.lower())
+                if actual_val != value:
+                    print(f"  ✗ FAIL: Expected header {header}={value}, got {actual_val}")
                     test_passed = False
             
             # Check body contains
             body_contains = expect_spec.get('body_contains', [])
-            response_text = response.text
             for substring in body_contains:
                 if substring not in response_text:
                     print(f"  ✗ FAIL: Expected body to contain '{substring}'")

@@ -1,0 +1,17 @@
+[project]
+name = "apigee-tf"
+version = "0.1.0"
+description = "Apigee Terraform Multi-Env Utility"
+dependencies = []
+requires-python = ">=3.9"
+
+[project.scripts]
+apim = "scripts.cli.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build-meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scripts*"]

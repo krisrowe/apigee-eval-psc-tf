@@ -4,7 +4,7 @@
     <Properties/>
     <Set>
         <Headers>
-            <Header name="x-custom-status">Apigeek</Header>
+            <Header name="x-custom-status">Example</Header>
         </Headers>
     </Set>
     <AssignVariable>
