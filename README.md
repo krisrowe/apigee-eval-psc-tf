@@ -28,6 +28,21 @@ Before you begin, ensure you have:
 
 ---
 
+## Installation
+
+The cleanest way to install this tool (which is 100% standard library Python) is to symlink it to your local bin directory. This requires no `sudo`, no `pip`, and no virtual environments.
+
+### Zero-Manager Install (Recommended)
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf $(pwd)/util ~/.local/bin/apim
+```
+
+Ensure `~/.local/bin` is in your `$PATH`.
+
+---
+
 ## Quick Start Scenarios
 
 Choose the scenario that matches your situation.
