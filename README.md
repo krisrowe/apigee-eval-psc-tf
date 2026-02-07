@@ -98,8 +98,6 @@ Choose the scenario that matches your situation.
 3.  **Plan & Apply**:
     ```bash
     ./util show existing-alias
-    ./util plan existing-alias
-    ./util apply existing-alias
     ```
     *Manual execution: Direct terraform commands are available once the workspace is selected.*
 
@@ -175,3 +173,39 @@ The system uses a three-tier fallback for environment group hostnames:
 1.  **Tier 1 (Explicit)**: `domain_name` in `$HOME/.config/apigee-tf/projects/<alias>.tfvars`.
 2.  **Tier 2 (Auto-derived)**: `{project_nickname}.{default_root_domain}` (from global config).
 3.  **Tier 3 (IP-only)**: Fallback to IP with a warning if no domain is configured.
+
+---
+
+## Appendix A: Custom Domain Setup & Validation
+
+To use a custom domain (e.g., `example.com`) with this tool, follow these steps to ensure proper delegation and automation:
+
+### 1. Configure Global Root
+Set your parent domain as the default root. This enables the CLI to auto-derive hostnames for new projects (e.g., `my-project.example.com`).
+```bash
+./util config set default_root_domain example.com
+```
+
+### 2. Identify GCP Name Servers
+Once you run `./util apply` for a project, Terraform creates a Managed Zone. You must find the specific name servers Google assigned to that zone:
+```bash
+gcloud dns managed-zones describe apigee-dns --project <gcp-project-id> --format="value(nameServers)"
+```
+*Note: Google uses clusters (a, b, c, d). Your project might be assigned `ns-cloud-d1...` while another uses `ns-cloud-a1...`.*
+
+### 3. Update Registrar
+Log into your domain registrar (Squarespace, etc.) and update the **Custom Name Servers** for your domain to match the 4 addresses found in Step 2.
+
+### 4. Validate Delegation
+Verify that the internet sees your new name servers. A mismatch here will cause `NXDOMAIN` errors.
+```bash
+dig NS yourdomain.com +short
+```
+
+### 5. Verify Resolution
+Check if your specific Apigee hostname is resolving to the Load Balancer IP by querying the assigned servers directly:
+```bash
+dig @ns-cloud-d1.googledomains.com my-project.yourdomain.com +short
+```
+
+Use `./util show <alias>` to monitor the live status of DNS propagation and SSL provisioning.
