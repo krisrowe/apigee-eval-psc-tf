@@ -156,40 +156,38 @@ def get_environment_hostname(project_alias, environment):
     state_file = state_dir / f'{project_alias}.tfstate'
     
     if not state_file.exists():
-        print(f"ERROR: Terraform state not found at {state_file}", file=sys.stderr)
-        print(f"Run './util apply {project_alias}' first to create infrastructure.", file=sys.stderr)
-        sys.exit(1)
+        print(f"WARNING: Terraform state not found at {state_file}", file=sys.stderr)
+        # Fallthrough to try tfvars
     
     # Query terraform output for envgroup_hostname using JSON output
-    try:
-        result = subprocess.run(
-            ['terraform', 'output', '-state', str(state_file), '-json'],
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode == 0 and result.stdout.strip():
-            outputs = json.loads(result.stdout)
+    if state_file.exists():
+        try:
+            result = subprocess.run(
+                ['terraform', 'output', '-state', str(state_file), '-json'],
+                capture_output=True,
+                text=True
+            )
             
-            # Try envgroup_hostname output first
-            if 'envgroup_hostname' in outputs:
-                return outputs['envgroup_hostname']['value']
-        
-        # Fallback: try domain_name from tfvars
-        vars_dict = load_vars(project_alias)
-        hostname = vars_dict.get('domain_name')
-        
-        if hostname:
-            print(f"WARNING: Using domain_name from tfvars (envgroup_hostname output not found)", file=sys.stderr)
-            return hostname
-        
-        print(f"ERROR: Could not determine hostname for '{project_alias}'", file=sys.stderr)
-        print(f"Run 'terraform apply' to populate outputs or add domain_name to tfvars.", file=sys.stderr)
-        sys.exit(1)
-        
-    except Exception as e:
-        print(f"ERROR: Failed to query terraform output: {e}", file=sys.stderr)
-        sys.exit(1)
+            if result.returncode == 0 and result.stdout.strip():
+                outputs = json.loads(result.stdout)
+                
+                # Try envgroup_hostname output first
+                if 'envgroup_hostname' in outputs:
+                    return outputs['envgroup_hostname']['value']
+        except Exception as e:
+            print(f"WARNING: Failed to query terraform output: {e}", file=sys.stderr)
+    
+    # Fallback: try domain_name from tfvars
+    vars_dict = load_vars(project_alias)
+    hostname = vars_dict.get('domain_name')
+    
+    if hostname:
+        print(f"WARNING: Using domain_name from tfvars (envgroup_hostname output not found)", file=sys.stderr)
+        return hostname
+    
+    print(f"ERROR: Could not determine hostname for '{project_alias}'", file=sys.stderr)
+    print(f"Run 'terraform apply' to populate outputs or add domain_name to tfvars.", file=sys.stderr)
+    sys.exit(1)
 
 def test_api(project_alias, proxy_name, bundle_path, environment, test_file=None):
     """Run integration tests for an API proxy."""
@@ -333,7 +331,7 @@ def test_api(project_alias, proxy_name, bundle_path, environment, test_file=None
                     test_passed = False
             
             if test_passed:
-                print(f"  ✓ PASS")
+                print(f"  ✓ PASS ({status_code})")
                 passed += 1
             else:
                 failed += 1

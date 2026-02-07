@@ -2,7 +2,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from scripts.cli.core import get_project_paths, ensure_dirs, load_vars, load_settings, api_get
+from scripts.cli.core import get_project_paths, ensure_dirs, load_vars, load_settings, api_request
 from scripts.cli.template import load_template
 
 def cmd_import(args):
@@ -83,13 +83,13 @@ def cmd_import(args):
     disc_control_plane = None
     disc_runtime = None
     
-    org_data = api_get(f"organizations/{requested_project_id}")
+    status, org_data = api_request("GET", f"organizations/{requested_project_id}")
     
     imports = []
     discovered_env_names = []
     discovered_eg_names = []
     
-    if org_data:
+    if status == 200 and org_data:
         print(f"  [+] Found Apigee Org (State: {org_data.get('state')})")
         disc_analytics = org_data.get("analyticsRegion")
         if disc_analytics:
@@ -109,8 +109,8 @@ def cmd_import(args):
         })
         
         # Detect Runtime (Instance)
-        instances_resp = api_get(f"organizations/{requested_project_id}/instances")
-        if instances_resp and instances_resp.get("instances"):
+        status, instances_resp = api_request("GET", f"organizations/{requested_project_id}/instances")
+        if status == 200 and instances_resp and instances_resp.get("instances"):
             for inst in instances_resp["instances"]:
                  disc_runtime = inst.get("location")
                  print(f"  [+] Found Instance: {inst['name']} in {disc_runtime}")
@@ -120,8 +120,8 @@ def cmd_import(args):
                  })
         
         # Detect Env Groups
-        eg_resp = api_get(f"organizations/{requested_project_id}/envgroups")
-        if eg_resp and eg_resp.get("environmentGroups"):
+        status, eg_resp = api_request("GET", f"organizations/{requested_project_id}/envgroups")
+        if status == 200 and eg_resp and eg_resp.get("environmentGroups"):
             for eg in eg_resp['environmentGroups']:
                 discovered_eg_names.append(eg['name'])
                 imports.append({
@@ -130,8 +130,8 @@ def cmd_import(args):
                 })
 
         # Detect Environments
-        envs_resp = api_get(f"organizations/{requested_project_id}/environments")
-        if envs_resp and isinstance(envs_resp, list):
+        status, envs_resp = api_request("GET", f"organizations/{requested_project_id}/environments")
+        if status == 200 and envs_resp and isinstance(envs_resp, list):
             discovered_env_names = envs_resp
             for env in discovered_env_names:
                  imports.append({

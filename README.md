@@ -116,7 +116,25 @@ Choose the scenario that matches your situation.
     ```
     *Manual execution: Direct terraform commands are available once the workspace is selected.*
 
----
+### Scenario 3: Verify Deployment (Testing)
+*Use this to validate that your API proxy is accessible and functioning correctly.*
+
+1.  **Find Project**:
+    List all available project configurations to find your alias.
+    ```bash
+    ./util list
+    # Output:
+    # Available Projects (Local Configs):
+    #   - my-project-alias
+    #   - another-project
+    ```
+
+2.  **Run Integration Test**:
+    Execute the test suite. The tool will automatically check DNS/SSL readiness before running the tests.
+    ```bash
+    ./util apis test my-project-alias --proxy-name weather-api --bundle ./apiproxies/weather-api
+    ```
+
 
 ## Configuration Reference
 

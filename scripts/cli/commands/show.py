@@ -1,7 +1,7 @@
 import sys
 import json
 from pathlib import Path
-from scripts.cli.core import get_project_paths, load_tfstate, load_vars, api_get, check_dns, check_ssl, get_nameservers
+from scripts.cli.core import get_project_paths, load_tfstate, load_vars, check_dns, check_ssl, api_request
 
 # ANSI Colors
 RED = '\033[91m'
@@ -39,15 +39,15 @@ def cmd_show(args):
     # 1. LIVE CLOUD STATUS (API PROBE)
     if project_id:
         print(f"\n{BOLD}CLOUD STATUS (Live API):{RESET}")
-        org = api_get(f"organizations/{project_id}", name)
-        if not org:
+        status, org = api_request("GET", f"organizations/{project_id}", project_name=name)
+        if status != 200:
             print(f"    {RED}✗ Apigee Organization not found in {project_id}{RESET}")
         else:
             print(f"    {GREEN}✓ Apigee Organization:{RESET} {org.get('state')} ({org.get('billingType')})")
             
             # Probe Instances
-            inst_data = api_get(f"organizations/{project_id}/instances", name)
-            if inst_data and "instances" in inst_data:
+            status, inst_data = api_request("GET", f"organizations/{project_id}/instances", project_name=name)
+            if status == 200 and inst_data and "instances" in inst_data:
                 for inst in inst_data["instances"]:
                     print(f"    {GREEN}✓ Instance Found:{RESET}     {inst['name']} in {BOLD}{inst['location']}{RESET}")
             else:

@@ -14,13 +14,16 @@ def api_request(method, path, project_name=None, headers=None, body=None, files=
     """Helper to call Apigee API via curl + gcloud auth."""
     base_url = "https://apigee.googleapis.com/v1"
     
-    if project_name:
-        vars_dict = load_vars(project_name)
-        cp_loc = vars_dict.get("control_plane_location")
-        if cp_loc:
-            base_url = f"https://{cp_loc}-apigee.googleapis.com/v1"
+    if path.startswith("http"):
+        url = path
+    else:
+        if project_name:
+            vars_dict = load_vars(project_name)
+            cp_loc = vars_dict.get("control_plane_location")
+            if cp_loc:
+                base_url = f"https://{cp_loc}-apigee.googleapis.com/v1"
 
-    url = f"{base_url}/{path}"
+        url = f"{base_url}/{path}"
     
     cmd = ["curl", "-s", "-i", "-X", method]
     cmd += ["-H", f"Authorization: Bearer {subprocess.run(['gcloud', 'auth', 'print-access-token'], capture_output=True, text=True).stdout.strip()}"]
