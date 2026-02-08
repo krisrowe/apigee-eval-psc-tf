@@ -7,11 +7,10 @@ PIP := $(VENV)/bin/pip
 setup:
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip --index-url https://pypi.org/simple
-	$(PIP) install -e . --index-url https://pypi.org/simple
+	$(PIP) install -e .[dev] --index-url https://pypi.org/simple
 
 test: setup
-	# Placeholder for future tests
-	echo "No unit tests yet."
+	$(VENV)/bin/pytest tests/
 
 install:
 	cd . && pipx install -e . --force --pip-args="--index-url https://pypi.org/simple"

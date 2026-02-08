@@ -1,29 +1,42 @@
-# Stuff
-*.zip
+# OS files (Ignored to keep the repo clean of machine-specific artifacts)
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 
-# Terraform
-terraform.tfvars
-.terraform
+# --- Logs & Zips ---
+*.log
+**/*.log
+# Ignore all zips to avoid committing Apigee proxy bundles or large binary archives
+*.zip
+**/*.zip
+
+# --- Terraform Exclusions ---
+
+# Local provider cache and binary plugins (Large and machine-specific)
+.terraform/
+
+# State files (Ignored because we use a centralized state directory managed by the CLI)
 *.tfstate
-*.tfstate.backup
+*.tfstate.*
 .terraform.tfstate.lock.info
-generated_imports.tf
 
-# Environment / Temp
-.tmp/
-temp/
-.gemini/
+# --- Terraform Tracking (EXPLICITLY INCLUDED) ---
+
+# Track these to ensure a consistent, reproducible project state across environments
+!.terraform.lock.hcl
+!apigee.tfvars
+
+# --- Python ---
 .venv/
 __pycache__/
 *.pyc
-weather-api.zip
-server.key
-server.crt
-*.txt
-schema.json
 *.egg-info/
-sandbox/
-verification_test/
-apigee.toml
+
+# --- Environment & Misc ---
+.tmp/
 temp/
+.gemini/
+*.bak
+*.tmp

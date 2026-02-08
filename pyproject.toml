@@ -5,9 +5,15 @@ description = "Apigee Terraform Multi-Env Utility"
 dependencies = [
     "click>=8.1.7",
     "rich>=13.7.0",
+    "python-hcl2>=4.3.2",
     "tomli>=2.0.1; python_version < '3.11'",
 ]
 requires-python = ">=3.9"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+]
 
 [project.scripts]
 apim = "scripts.cli.app:cli"

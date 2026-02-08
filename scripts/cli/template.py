@@ -5,12 +5,13 @@ from pathlib import Path
 
 
 VALID_FIELDS = {
-    "gcp_project_id",
+    "region",
     "domain_name",
     "apigee_analytics_region",
     "apigee_runtime_location",
     "control_plane_location",
-    "project_nickname"
+    "apigee_billing_type",
+    "state_suffix"
 }
 
 

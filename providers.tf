@@ -22,22 +22,38 @@ terraform {
 }
 
 locals {
-  # Construct the DRZ endpoint URL if control_plane_location is set
-  apigee_endpoint = var.control_plane_location != "" ? "https://${var.control_plane_location}-apigee.googleapis.com/v1/" : ""
+  apigee_endpoint = (var.control_plane_location != null && var.control_plane_location != "") ? "https://${var.control_plane_location}-apigee.googleapis.com/v1/" : ""
 }
 
+# 1. Bootstrap Provider - YOUR IDENTITY (ADC)
+# Used for creating SA, Group, IAM bindings - things that must run as the user
 provider "google" {
-  project = var.gcp_project_id
+  alias   = "bootstrap"
+  project               = var.gcp_project_id
+  billing_project       = var.gcp_project_id
+  user_project_override = true
+}
 
-  # Data Residency Zone (DRZ): Use regional control plane if specified
-  # When empty, this attribute is omitted and the global endpoint is used
+provider "google-beta" {
+  alias   = "bootstrap"
+  project               = var.gcp_project_id
+  billing_project       = var.gcp_project_id
+  user_project_override = true
+}
+
+# 2. Default Provider - SA IDENTITY (via env var GOOGLE_IMPERSONATE_SERVICE_ACCOUNT)
+# CLI sets this env var to impersonate terraform-deployer
+# Used for all other resources
+provider "google" {
+  project               = var.gcp_project_id
+  billing_project       = var.gcp_project_id
+  user_project_override = true
   apigee_custom_endpoint = local.apigee_endpoint != "" ? local.apigee_endpoint : null
 }
 
 provider "google-beta" {
-  project = var.gcp_project_id
-
-  # Data Residency Zone (DRZ): Use regional control plane if specified
-  # When empty, this attribute is omitted and the global endpoint is used
+  project               = var.gcp_project_id
+  billing_project       = var.gcp_project_id
+  user_project_override = true
   apigee_custom_endpoint = local.apigee_endpoint != "" ? local.apigee_endpoint : null
 }

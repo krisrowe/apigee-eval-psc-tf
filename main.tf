@@ -67,6 +67,26 @@ resource "google_project_service" "dns" {
 }
 
 
+resource "google_project_service" "iam" {
+  project = var.gcp_project_id
+  service = "iam.googleapis.com"
+}
+
+resource "google_project_service" "secretmanager" {
+  project = var.gcp_project_id
+  service = "secretmanager.googleapis.com"
+}
+
+resource "google_project_service" "crm" {
+  project = var.gcp_project_id
+  service = "cloudresourcemanager.googleapis.com"
+}
+
+resource "google_project_service" "serviceusage" {
+  project = var.gcp_project_id
+  service = "serviceusage.googleapis.com"
+}
+
 resource "google_compute_network" "apigee_network" {
   name                    = "apigee-network"
   project                 = var.gcp_project_id
@@ -78,10 +98,10 @@ resource "google_apigee_organization" "apigee_org" {
   project_id       = var.gcp_project_id
   
   # For DRZ: analytics_region must be null (not set), use api_consumer_data_location instead
-  analytics_region = var.control_plane_location != "" ? null : var.apigee_analytics_region
+  analytics_region = (var.control_plane_location != null && var.control_plane_location != "") ? null : var.apigee_analytics_region
 
   # DRZ only: Set consumer data location
-  api_consumer_data_location = var.consumer_data_region != "" ? var.consumer_data_region : null
+  api_consumer_data_location = (var.consumer_data_region != null && var.consumer_data_region != "") ? var.consumer_data_region : null
 
   runtime_type = "CLOUD"
 
@@ -105,7 +125,7 @@ resource "google_apigee_organization" "apigee_org" {
 
 
 resource "google_apigee_instance" "apigee_instance" {
-  name     = var.apigee_runtime_location
+  name     = coalesce(var.apigee_instance_name, var.apigee_runtime_location)
   location = var.apigee_runtime_location
   org_id   = google_apigee_organization.apigee_org.id
 
@@ -118,7 +138,7 @@ resource "google_apigee_environment" "apigee_env" {
   for_each = local.environments
   name     = each.key
   org_id   = google_apigee_organization.apigee_org.id
-  type     = "COMPREHENSIVE"
+  type     = var.apigee_billing_type == "EVALUATION" ? null : "COMPREHENSIVE"
 }
 
 resource "google_apigee_envgroup" "envgroup" {

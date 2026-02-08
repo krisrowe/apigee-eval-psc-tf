@@ -4,6 +4,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
+import hcl2
+from scripts.cli.config_sdk import get_config_manager
 try:
     import tomllib
 except ImportError:
@@ -14,18 +16,20 @@ class ProjectConfig:
     name: str
     gcp_project_id: str
     region: str
-    nickname: str
 
 @dataclass
 class ApigeeConfig:
-    billing_type: str = "PAYG"
+    billing_type: Optional[str] = None  # Smart Default: EVALUATION, auto-upgrades to PAYG for DRZ
     analytics_region: str = "us-central1"
     control_plane_location: str = ""
     consumer_data_region: str = ""
+    instance_name: Optional[str] = None
+    state_suffix: Optional[str] = None  # For isolating multiple deployments in same project
 
 @dataclass
 class NetworkConfig:
     domain: Optional[str] = None
+    default_root_domain: Optional[str] = None
 
 @dataclass
 class Config:
@@ -35,48 +39,103 @@ class Config:
     root_dir: Path
 
 class ConfigLoader:
-    CONFIG_FILE = "apigee.toml"
+    # Supported config filenames in order of preference
+    CONFIG_FILES = ["terraform.tfvars", "apigee.tfvars"]
 
     @classmethod
-    def load(cls, working_dir: Path) -> Config:
-        config_path = working_dir / cls.CONFIG_FILE
-        if not config_path.exists():
-            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    def load(cls, working_dir: Path, optional: bool = False) -> Config:
+        hcl_path = None
+        for filename in cls.CONFIG_FILES:
+            candidate = working_dir / filename
+            if candidate.exists():
+                hcl_path = candidate
+                break
+        
+        data = {}
+        if hcl_path:
+            try:
+                with open(hcl_path, "r") as f:
+                    data = hcl2.load(f)
+            except Exception as e:
+                raise ValueError(f"Failed to parse {hcl_path.name}: {e}")
+        elif not optional:
+            raise FileNotFoundError(f"Configuration file not found. Expected one of: {', '.join(cls.CONFIG_FILES)}")
 
-        try:
-            with open(config_path, "rb") as f:
-                data = tomllib.load(f)
-        except Exception as e:
-            raise ValueError(f"Failed to parse {cls.CONFIG_FILE}: {e}")
+        # Use the centralized ConfigManager for global settings
+        sdk_config = get_config_manager().load()
 
-        project_data = data.get("project", {})
-        apigee_data = data.get("apigee", {})
-        network_data = data.get("network", {})
+        # HCL parser returns lists for blocks, we need to flatten if necessary
+        def get_section(name):
+            section = data.get(name, {})
+            if isinstance(section, list) and len(section) > 0:
+                return section[0]
+            return section
+
+        # Helper to get value from either        # Helper to get value
+        def get_val(section, key, flat_key=None, default=None):
+            # 1. Try nested block (TOML style): section { key = val }
+            if section in data:
+                sec_data = data[section]
+                if isinstance(sec_data, list) and len(sec_data) > 0:
+                    val = sec_data[0].get(key)
+                    if val is not None: return val
+                elif isinstance(sec_data, dict):
+                    val = sec_data.get(key)
+                    if val is not None: return val
+            
+            # 2. Try flat key (TFVARS style): flat_key = val
+            if flat_key and flat_key in data:
+                return data[flat_key]
+            
+            # 3. Fallback to just key (if flat_key not provided or match)
+            if key in data:
+                return data[key]
+                
+            return default
+
+        project_id = get_val("project", "gcp_project_id", "gcp_project_id") or os.environ.get("GCP_PROJECT_ID", "")
+        region = get_val("project", "region", "apigee_runtime_location") or os.environ.get("GCP_REGION", "us-central1")
+        name = get_val("project", "name", default=project_id or "unnamed-project")
+        
+        # Smart Defaulting for Billing
+        control_plane = get_val("apigee", "control_plane_location", "control_plane_location", "")
+        billing_type = get_val("apigee", "billing_type", "apigee_billing_type")
+        if not billing_type:
+            billing_type = "PAYG" if control_plane else "EVALUATION"
 
         return Config(
             project=ProjectConfig(
-                name=project_data.get("name", "unnamed-project"),
-                gcp_project_id=project_data.get("gcp_project_id", ""),
-                region=project_data.get("region", "us-central1"),
-                nickname=project_data.get("nickname", project_data.get("name", "unnamed")),
+                name=name,
+                gcp_project_id=project_id,
+                region=region,
             ),
             apigee=ApigeeConfig(
-                billing_type=apigee_data.get("billing_type", "PAYG"),
-                analytics_region=apigee_data.get("analytics_region", "us-central1"),
-                control_plane_location=apigee_data.get("control_plane_location", ""),
-                consumer_data_region=apigee_data.get("consumer_data_region", ""),
+                billing_type=billing_type,
+                analytics_region=get_val("apigee", "analytics_region", "apigee_analytics_region", "us-central1"),
+                control_plane_location=control_plane,
+                consumer_data_region=get_val("apigee", "consumer_data_region", "consumer_data_region", ""),
+                instance_name=get_val("apigee", "instance_name", "apigee_instance_name"),
+                state_suffix=get_val("apigee", "state_suffix", "state_suffix"),
             ),
             network=NetworkConfig(
-                domain=network_data.get("domain"),
+                domain=get_val("network", "domain", "domain_name"),
+                default_root_domain=sdk_config.default_root_domain or os.environ.get("APIM_DEFAULT_ROOT_DOMAIN")
             ),
             root_dir=working_dir.resolve()
         )
 
     @classmethod
     def find_root(cls) -> Path:
-        """Looks for apigee.toml in CWD and parents."""
+        """Looks for config file (HCL) in CWD and parents."""
         cwd = Path.cwd()
-        for path in [cwd] + list(cwd.parents):
-            if (path / cls.CONFIG_FILE).exists():
-                return path
-        raise FileNotFoundError(f"Could not find {cls.CONFIG_FILE} in {cwd} or parents.")
+        current = cwd
+        while True:
+            for filename in cls.CONFIG_FILES:
+                if (current / filename).exists():
+                    return current
+            
+            if current.parent == current:  # Reached root
+                break
+            current = current.parent
+            
+        raise FileNotFoundError(f"Could not find configuration file ({', '.join(cls.CONFIG_FILES)}) in {cwd} or parents.")

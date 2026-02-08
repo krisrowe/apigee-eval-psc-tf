@@ -1,155 +1,73 @@
-import sys
-import json
+import click
 from pathlib import Path
-from scripts.cli.core import get_project_paths, load_tfstate, load_vars, check_dns, check_ssl, api_request
+from rich.console import Console
+from rich.table import Table
+from scripts.cli.core import get_project_paths, load_tfstate, load_vars
+from scripts.cli.cloud.factory import get_cloud_provider
 
-# ANSI Colors
-RED = '\033[91m'
-GREEN = '\033[92m'
-YELLOW = '\033[93m'
-CYAN = '\033[96m'
-BOLD = '\033[1m'
-RESET = '\033[0m'
+console = Console()
 
-def cmd_show(args):
-    """Show configuration and resource status for a project."""
-    name = args.name
-    var_file, state_file = get_project_paths(name)
-    vars_dict = load_vars(name)
-    project_id = vars_dict.get('gcp_project_id')
+@click.command(name="show")
+@click.option("--raw", is_flag=True, help="Show raw .tfvars content.")
+@click.pass_context
+def show_cmd(ctx, raw):
+    """Show configuration and resource status for the local project."""
+    var_file, state_file = get_project_paths()
     
-    def friendly_path(p):
-        try:
-            return str(p).replace(str(Path.home()), "~")
-        except: return str(p)
-    
-    if args.raw:
-        if var_file.exists():
-            with open(var_file, 'r') as f:
-                print(f.read(), end='')
-        else:
-            print(f"Error: Var file {var_file} not found.", file=sys.stderr)
-            sys.exit(1)
+    if not var_file.exists():
+        console.print(f"[red]Error: No local apigee.tfvars found in CWD.[/red]")
+        ctx.exit(1)
+
+    if raw:
+        with open(var_file, 'r') as f:
+            console.print(f.read())
         return
 
-    print(f"\n{BOLD}PROJECT PROFILE: {CYAN}{name}{RESET}")
-    print(f"  + Config: {friendly_path(var_file) if var_file.exists() else RED + 'MISSING' + RESET}")
-    print(f"  + State:  {friendly_path(state_file) if state_file.exists() else YELLOW + 'NOT INITIALIZED' + RESET}")
+    vars_dict = load_vars()
+    project_id = vars_dict.get('gcp_project_id')
     
-    # 1. LIVE CLOUD STATUS (API PROBE)
+    console.print(f"\n[bold underline]LOCAL PROJECT STATUS[/bold underline]")
+    console.print(f"  [bold]Config:[/bold] {str(var_file)}")
+    console.print(f"  [bold]State:[/bold]  {str(state_file) if state_file.exists() else '[yellow]NOT INITIALIZED[/yellow]'}")
+    
+    # Live Probing
     if project_id:
-        print(f"\n{BOLD}CLOUD STATUS (Live API):{RESET}")
-        status, org = api_request("GET", f"organizations/{project_id}", project_name=name)
-        if status != 200:
-            print(f"    {RED}✗ Apigee Organization not found in {project_id}{RESET}")
-        else:
-            print(f"    {GREEN}✓ Apigee Organization:{RESET} {org.get('state')} ({org.get('billingType')})")
+        console.print(f"\n[bold]CLOUD STATUS (Live API):[/bold]")
+        provider = get_cloud_provider()
+        org = provider.get_org(project_id)
+        if org:
+            console.print(f"    [green]✓ Apigee Organization found.[/green]")
             
-            # Probe Instances
-            status, inst_data = api_request("GET", f"organizations/{project_id}/instances", project_name=name)
-            if status == 200 and inst_data and "instances" in inst_data:
-                for inst in inst_data["instances"]:
-                    print(f"    {GREEN}✓ Instance Found:{RESET}     {inst['name']} in {BOLD}{inst['location']}{RESET}")
-            else:
-                 print(f"    {YELLOW}⚠ No Instances found.{RESET}")
+            # Show Envs
+            envs = provider.get_environments(project_id)
+            if envs:
+                console.print(f"    [dim]Environments: {', '.join(envs)}[/dim]")
 
-    # 2. LOCAL CONFIGURATION
-    if var_file.exists():
-        print(f"\n{BOLD}LOCAL CONFIGURATION (.tfvars):{RESET}")
-        with open(var_file, 'r') as f:
-            for line in f:
-                if line.strip() and not line.strip().startswith("#"):
-                    print(f"    {line.strip()}")
-    
-    # 3. RESOURCE TABLE (STATE)
-    print(f"\n{BOLD}TRACKED RESOURCES (Terraform State):{RESET}")
-    state = load_tfstate(name)
-    
+            # DNS/SSL if nickname exists (default domain derivation uses nickname)
+            nickname = vars_dict.get('project_nickname')
+            if nickname:
+                # DNS Zone Check
+                ns = provider.get_dns_nameservers(project_id)
+                if ns:
+                    console.print(f"    [green]✓ DNS Zone found.[/green] [dim]Nameservers: {', '.join(ns[:2])}...[/dim]")
+                
+                # Derive hostname similar to main.tf logic
+                # For now, we'll just check if it's likely configured
+                domain = vars_dict.get('domain_name')
+                if domain:
+                    ssl = provider.get_ssl_certificate_status(project_id, domain)
+                    status = ssl.get("status", "UNKNOWN")
+                    console.print(f"    [green]✓ Domain:[/green] {domain} [dim](SSL: {status})[/dim]")
+
+    # Tracked Resources
+    console.print(f"\n[bold]TRACKED RESOURCES (Terraform State):[/bold]")
+    state = load_tfstate()
     if not state:
-        print(f"    {YELLOW}Project not yet applied.{RESET}")
-        print(f"\n{BOLD}NEXT STEPS:{RESET}")
-        print(f"  Using Utility:")
-        print(f"    {CYAN}./util plan {name}{RESET}")
-        print(f"    {CYAN}./util apply {name}{RESET}")
-        print(f"\n  Direct Terraform:")
-        print(f"    terraform workspace select {name}")
-        print(f"    terraform plan -var-file={var_file}")
-        print(f"    terraform apply -var-file={var_file}")
+        console.print(f"    [yellow]Project not yet applied.[/yellow]")
     else:
-        resources = state.get("resources", [])
-        if not resources:
-            print(f"    {YELLOW}State exists but contains no resources.{RESET}")
-        else:
-            print(f"    +--------------------------------+-----------+------------------------------------+")
-            print(f"    | {BOLD}Resource                       {RESET}| {BOLD}Status    {RESET}| {BOLD}Resource ID / Details              {RESET}|")
-            print(f"    +--------------------------------+-----------+------------------------------------+")
-            
-            for res in resources:
-                rtype = res.get("type", "")
-                base_name = res.get("name", "")
-                for inst in res.get("instances", []):
-                    friendly_name = f"{rtype}.{base_name}"
-                    index = inst.get("index_key")
-                    attrs = inst.get("attributes", {})
-                    res_id = attrs.get("id", attrs.get("name", "N/A"))
-                    
-                    if rtype == "google_apigee_organization": friendly_name = "Apigee Organization"
-                    elif rtype == "google_apigee_instance": friendly_name = f"Apigee Instance ({attrs.get('location', '?')})"
-                    elif rtype == "google_apigee_environment": friendly_name = f"Environment: {index}"
-                    elif rtype == "google_apigee_envgroup": friendly_name = f"EnvGroup: {index}"
-                    elif rtype == "google_compute_global_address": friendly_name = "External IP (Ingress)"
-                    
-                    disp_name = (friendly_name[:30]).ljust(30)
-                    status_str = f"{GREEN}✓ found{RESET}".ljust(18)
-                    disp_id = (res_id[:34] if res_id else "N/A").ljust(34)
-                    print(f"    | {disp_name} | {status_str} | {disp_id} |")
-            
-            print(f"    +--------------------------------+-----------+------------------------------------+")
-
-    # 4. INGRESS & READINESS (Diagnostics)
-    print(f"\n{BOLD}INGRESS & READINESS:{RESET}")
-    # Get hostname from state
-    from scripts.cli.commands.apis import get_environment_hostname
-    try:
-        hostname = get_environment_hostname(name, "dev")
-        print(f"  + Hostname: {CYAN}{hostname}{RESET}")
-        
-        # DNS
-        dns_ok, dns_ip = check_dns(hostname)
-        if dns_ok:
-            dns_str = f"{GREEN}✓ Resolves to {dns_ip}{RESET}"
-        else:
-            dns_str = f"{YELLOW}⚠ NXDOMAIN (Pending Propagation){RESET}"
-            # Surface Name Servers if found in project_id
-            if project_id:
-                ns_list = get_nameservers(project_id)
-                if ns_list:
-                    dns_str += f"\n    {BOLD}Expected Name Servers:{RESET}\n"
-                    for ns in ns_list:
-                        dns_str += f"      - {ns}\n"
-                    dns_str += f"    {YELLOW}→ Update your registrar with these values to fix delegation.{RESET}"
-        
-        print(f"  + DNS:      {dns_str}")
-        
-        # SSL
-        if project_id:
-            ssl_status, domain_status = check_ssl(project_id, hostname)
-            if ssl_status == "ACTIVE":
-                ssl_str = f"{GREEN}✓ ACTIVE{RESET}"
-            elif ssl_status == "PROVISIONING":
-                ssl_str = f"{YELLOW}⚠ PROVISIONING ({domain_status}){RESET}"
-            else:
-                ssl_str = f"{RED}✗ {ssl_status} ({domain_status}){RESET}"
-            print(f"  + SSL Cert: {ssl_str}")
-            
-    except Exception:
-        print(f"  {YELLOW}⚠ Ingress not yet configured or state missing.{RESET}")
-
-    print(f"\n{BOLD}GCP LABELS:{RESET}")
-    print(f"  apigee-tf: {CYAN}{name}{RESET}")
-    
-    # Contextual Guidance
-    if not var_file.exists():
-        print(f"\n{BOLD}NEXT ACTION:{RESET} ./util import {name} --project <id>")
-    elif not state_file.exists():
-        print(f"\n{BOLD}NEXT ACTION:{RESET} ./util plan {name}")
+        table = Table()
+        table.add_column("Resource", style="cyan")
+        table.add_column("Status", style="green")
+        for res in state.get("resources", []):
+            table.add_row(res.get("type", ""), "✓ found")
+        console.print(table)
