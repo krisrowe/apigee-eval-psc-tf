@@ -11,89 +11,116 @@ from scripts.cli.engine import TerraformStager
 
 console = Console()
 
-# IAM resources that must be bootstrapped without impersonation
-IAM_BOOTSTRAP_TARGETS = [
-    "google_service_account.deployer",
-    "google_cloud_identity_group.apigee_admins",
-    "google_cloud_identity_group_membership.deployer_in_admins",
-    "google_project_iam_member.admin_group_owner",
-    "google_project_service.cloudidentity",
-    "google_project_service.crm",
-    "google_project_service.serviceusage",
-    "google_project_service.iam",
-]
-
-
-def _check_sa_exists_in_state(staging_dir: Path) -> bool:
-    """Check if terraform-deployer SA exists in terraform state."""
-    terraform_bin = shutil.which("terraform")
-    if not terraform_bin:
-        return False
+def _run_bootstrap_folder(stager: TerraformStager, config, deletes_allowed: bool = False, fake_secret: bool = False) -> Optional[str]:
+    """
+    Run 0-bootstrap folder.
+    Returns: Service Account Email if successful, None otherwise.
+    """
+    console.print("\n[bold dim]Phase 0: Bootstrapping (User Identity)...[/bold dim]")
     
-    try:
-        result = subprocess.run(
-            [terraform_bin, "state", "list"],
-            cwd=staging_dir,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            return False  # No state or error = SA doesn't exist
-        
-        return "google_service_account.deployer" in result.stdout
-    except Exception:
-        return False
-
-
-def _run_bootstrap(staging_dir: Path, config) -> bool:
-    """Run targeted apply for IAM resources without impersonation."""
-    console.print("[yellow]⚡ Bootstrap required: SA not in state[/yellow]")
+    # 1. Stage bootstrap
+    bootstrap_staging = stager.stage_phase("0-bootstrap")
+    
     terraform_bin = shutil.which("terraform")
-
-    # Phase 1: Enable Critical APIs (CRM, ServiceUsage, IAM, CloudIdentity)
-    # This must happen FIRST to allow other resources to be refreshed/read
-    console.print("[dim]Phase 1: Enabling critical APIs (ADC direct)...[/dim]")
-    phase1_targets = [
-        "-target=google_project_service.crm",
-        "-target=google_project_service.serviceusage",
-        "-target=google_project_service.iam",
-        "-target=google_project_service.cloudidentity"
+    
+    # 2. Init
+    subprocess.run([terraform_bin, "init", "-input=false"], cwd=bootstrap_staging, check=True)
+    
+    # 3. Apply (User Identity / ADC)
+    apply_cmd = [
+        terraform_bin, "apply", 
+        "-input=false", 
+        "-auto-approve", 
+        "-lock=false",
+        f"-var=allow_deletes={str(deletes_allowed).lower()}",
+        f"-var=fake_secret={str(fake_secret).lower()}"
     ]
-    cmd1 = [
-        terraform_bin, "apply",
-        "-input=false",
-        "-auto-approve",
-        "-var=skip_impersonation=true",
-    ] + phase1_targets
     
-    result1 = subprocess.run(cmd1, cwd=staging_dir)
-    if result1.returncode != 0:
-        console.print("[red]Bootstrap Phase 1 (APIs) failed. Will attempt Phase 2 anyway...[/red]")
-        # We continue because maybe APIs are already enabled but state is messy
-    
-    # Phase 2: Create IAM Resources
-    console.print("[dim]Phase 2: Creating IAM resources (ADC direct)...[/dim]")
-    phase2_targets = []
-    for target in IAM_BOOTSTRAP_TARGETS:
-        if not target.startswith("google_project_service."):
-            phase2_targets.extend(["-target", target])
-            
-    cmd2 = [
-        terraform_bin, "apply",
-        "-input=false",
-        "-auto-approve",
-        "-var=skip_impersonation=true",
-    ] + phase2_targets
-    
-    result2 = subprocess.run(cmd2, cwd=staging_dir)
-    if result2.returncode != 0:
-        console.print("[red]Bootstrap Phase 2 (IAM) failed. Cannot proceed.[/red]")
-        return False
-    
-    console.print("[green]✓ Bootstrap complete. APIs enabled and SA created.[/green]\n")
-    return True
+    # FORCE Quota Project for ADC
+    # This solves the "cloudidentity requires a quota project" error by forcing
+    # the SDK to use the target project for quota, bypassing local gcloud config.
+    env = os.environ.copy()
+    env["GOOGLE_CLOUD_QUOTA_PROJECT"] = config.project.gcp_project_id
 
+    # 0. Pre-Flight: Ensure CRM/IAM APIs are enabled
+    # Terraform cannot enable these itself if it can't read the project state (Catch-22).
+    _ensure_meta_apis(config.project.gcp_project_id)
+
+    console.print(f"[dim]Executing: {' '.join(apply_cmd)} in {bootstrap_staging}[/dim]")
+    result = subprocess.run(apply_cmd, cwd=bootstrap_staging, env=env)
+    
+    if result.returncode != 0:
+        console.print("[red]Phase 0 Bootstrap Failed.[/red]")
+        return None
+
+    # 4. Get Output (SA Email)
+    output_cmd = [terraform_bin, "output", "-raw", "service_account_email"]
+    out_result = subprocess.run(output_cmd, cwd=bootstrap_staging, capture_output=True, text=True)
+    
+    if out_result.returncode != 0:
+        console.print("[red]Failed to read service_account_email output from bootstrap.[/red]")
+        return None
+        
+    sa_email = out_result.stdout.strip()
+    console.print(f"[green]✓ Bootstrap complete. SA: {sa_email}[/green]")
+    return sa_email
+
+def _ensure_meta_apis(project_id: str):
+    """
+    Enables Cloud Resource Manager and Service Usage APIs.
+    These are the 'Bootloader' APIs required for Terraform to even start planning.
+    Without CRM, TF can't read the project. Without ServiceUsage, TF can't enable other APIs.
+    """
+    console.print("[dim]Pre-Flight: Ensuring bootloader APIs (CRM, ServiceUsage, IAM) are enabled...[/dim]")
+    # We use gcloud here because it uses the active creds (User ADC) most reliably.
+    # This command is idempotent.
+    cmd = [
+        "gcloud", "services", "enable",
+        "cloudresourcemanager.googleapis.com",
+        "serviceusage.googleapis.com", 
+        "iam.googleapis.com",
+        "--project", project_id
+    ]
+    # Suppress output unless error
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Warn but don't crash - let Terraform try, maybe user lacks permission but APIs are on.
+        console.print(f"[yellow]Warning: Failed to auto-enable bootloader APIs: {result.stderr.strip()}[/yellow]")
+    else:
+        console.print("[dim]Bootloader APIs verified.[/dim]")
+
+def _run_main_folder(stager: TerraformStager, config, sa_email: str, command: str, args: List[str]) -> int:
+    """
+    Run 1-main folder.
+    """
+    console.print(f"\n[bold dim]Phase 1: Main Infrastructure (SA Identity: {sa_email})...[/bold dim]")
+    
+    # 1. Stage main
+    main_staging = stager.stage_phase("1-main")
+    
+    terraform_bin = shutil.which("terraform")
+    
+    # 2. Init
+    subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True)
+    
+    # 3. Apply/Plan (SA Identity)
+    cmd = [terraform_bin, command, "-input=false", "-lock=false"] + args
+    
+    # Pass SA email as env var (or TF var if we used variable)
+    # Our providers.tf uses GOOGLE_IMPERSONATE_SERVICE_ACCOUNT env var? No, it uses 'access_token' data source usually?
+    # Wait, providers.tf in 1-main:
+    # "provider google { ... }" -> no impersonation config?
+    # Ah, I need to check how providers.tf was set up in 1-main.
+    # It said: "# 2. Default Provider - SA IDENTITY (via env var GOOGLE_IMPERSONATE_SERVICE_ACCOUNT)"
+    # So we must set the Env Var!
+    
+    env = os.environ.copy()
+    env["GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"] = sa_email
+    
+    console.print(f"[dim]Executing: {' '.join(cmd)} in {main_staging}[/dim]")
+    result = subprocess.run(cmd, cwd=main_staging, env=env)
+    
+    return result.returncode
 
 def run_terraform(
     config,
@@ -101,65 +128,52 @@ def run_terraform(
     auto_approve: bool = False,
     fake_secret: bool = False,
     deletes_allowed: bool = False,
-
     skip_impersonation: bool = False,
     force_bootstrap: bool = False,
     targets: Optional[List[str]] = None,
 ) -> int:
     """
-    Run a terraform command with automatic bootstrap detection.
-    
-    - Checks if SA exists in state
-    - If not, bootstraps IAM resources first (skip_impersonation=true)
-    - Then runs the requested command
+    Orchestrate multi-phase terraform run.
     """
     stager = TerraformStager(config)
-    stager.stage()
     
-    terraform_bin = shutil.which("terraform")
-    if not terraform_bin:
-        raise RuntimeError("'terraform' binary not found in PATH")
+    # Step 1: Bootstrap (Phase 0)
+    # We always run bootstrap to ensure state is healthy and get SA email.
+    # If skip_impersonation is True, we might skip this? No, we still need SA output if we plan to use it?
+    # If skip_impersonation is True, user wants to run MAIN as User.
     
-    # Initialize if needed
-    if not (stager.staging_dir / ".terraform").exists():
-        subprocess.run(
-            [terraform_bin, "init", "-input=false"],
-            cwd=stager.staging_dir,
-            check=True
-        )
-    
-    # Check if SA exists - if not, bootstrap first (unless we're already skipping impersonation)
-    # OR if force_bootstrap is True
-    should_bootstrap = force_bootstrap
-    if not should_bootstrap and not skip_impersonation:
-        should_bootstrap = not _check_sa_exists_in_state(stager.staging_dir)
+    sa_email = None
+    if not skip_impersonation:
+        sa_email = _run_bootstrap_folder(stager, config, deletes_allowed=deletes_allowed, fake_secret=fake_secret)
+        if not sa_email:
+            return 1
+            
+    # Step 2: Main (Phase 1)
+    args = []
+    if command == "apply" and auto_approve:
+        args.append("-auto-approve")
         
-    if should_bootstrap:
-        if not _run_bootstrap(stager.staging_dir, config):
-            return 1  # Bootstrap failed
-    
-    # Build command
-    cmd = [terraform_bin, command, "-input=false"]
-    if command == "apply":
-        if auto_approve:
-            cmd.append("-auto-approve")
-        cmd.append("-lock=false")
-    
-    # Add targets if specified
     if targets:
-        for target in targets:
-            cmd.extend(["-target", target])
+        for t in targets:
+            args.extend(["-target", t])
+            
+    # Pass variables
+    args.append(f"-var=fake_secret={str(fake_secret).lower()}")
+    args.append(f"-var=allow_deletes={str(deletes_allowed).lower()}")
     
-    # Add variables
-    cmd.append(f"-var=skip_impersonation={str(skip_impersonation).lower()}")
-    cmd.append(f"-var=fake_secret={str(fake_secret).lower()}")
-    cmd.append(f"-var=allow_deletes={str(deletes_allowed).lower()}")
+    # If skip_impersonation, run as User (std env).
+    # If not, run as SA (env var injected in _run_main_folder).
     
-    # Run
-    # DEBUG: Print command to verify variables
-    console.print(f"[dim]DEBUG Executing: {' '.join(cmd)}[/dim]")
-    result = subprocess.run(cmd, cwd=stager.staging_dir)
-    return result.returncode
+    if skip_impersonation:
+        # Run main as user (Phase 1 but without SA env var)
+         console.print("\n[bold dim]Phase 1: Main Infrastructure (User Identity - Skip Impersonation)...[/bold dim]")
+         main_staging = stager.stage_phase("1-main")
+         subprocess.run(["terraform", "init", "-input=false"], cwd=main_staging, check=True)
+         cmd = ["terraform", command, "-input=false", "-lock=false"] + args
+         result = subprocess.run(cmd, cwd=main_staging)
+         return result.returncode
+    else:
+        return _run_main_folder(stager, config, sa_email, command, args)
 
 
 @click.command()

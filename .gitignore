@@ -37,6 +37,5 @@ __pycache__/
 # --- Environment & Misc ---
 .tmp/
 temp/
-.gemini/
 *.bak
 *.tmp

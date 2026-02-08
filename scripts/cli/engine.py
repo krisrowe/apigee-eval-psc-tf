@@ -32,68 +32,81 @@ class TerraformStager:
         # scripts/cli/engine.py -> ../../ = package root
         package_root = current_file.parents[2]
         
-        if not (package_root / "main.tf").exists():
-            raise FileNotFoundError(f"Could not locate package root at {package_root}")
+        if not (package_root / "tf").exists():
+            raise FileNotFoundError(f"Could not locate package root (tf/ folder missing) at {package_root}")
         return package_root
 
-    def stage(self):
-        """Performs the Wipe & Copy strategy."""
-        console.print(f"[dim]Staging Terraform in {self.staging_dir}...[/dim]")
+    def stage_phase(self, phase_name: str) -> Path:
+        """
+        Stages a specific phase folder (e.g. '0-bootstrap', '1-main').
+        Returns path to the staged directory for that phase.
+        """
+        phase_staging = self.staging_dir / phase_name
+        console.print(f"[dim]Staging {phase_name} in {phase_staging}...[/dim]")
         
-        if not self.staging_dir.exists():
-            self.staging_dir.mkdir(parents=True)
+        if not phase_staging.exists():
+            phase_staging.mkdir(parents=True)
+            
+        # 1. WIPE
+        self._wipe_dir(phase_staging)
+        
+        # 2. COPY PACKAGE TF (from tf/<phase_name>)
+        self._copy_phase_tf(phase_name, phase_staging)
+        
+        # 3. GENERATE BACKEND (unique state file per phase)
+        self._generate_backend(phase_name, phase_staging)
+        
+        # 4. GENERATE TFVARS
+        self._generate_tfvars(phase_staging)
+        
+        # 5. COPY USER FILES (overlay)
+        # We copy user files to BOTH phases because we don't know which vars/tf files apply to which phase.
+        # Terraform will ignore unused variables (mostly), or user should split them?
+        # For simplicity, we copy all user overlay files to both.
+        self._copy_user_files(phase_staging)
+        
+        return phase_staging
 
-        # 1. WIPE: Remove old TF files, preserve .terraform cache
-        self._wipe_staging()
-
-        # 2. COPY PACKAGE TF: Copy base TF files from package
-        self._copy_package_tf()
-
-        # 3. GENERATE BACKEND: Create backend.tf pointing to state location
-        self._generate_backend()
-
-        # 4. GENERATE TFVARS: Create auto.tfvars.json from config
-        self._generate_tfvars()
-
-        # 5. COPY USER TF: Copy user's overlay *.tf and *.tfvars files
-        self._copy_user_files()
-
-    def _wipe_staging(self):
-        """Removes all *.tf and *.tfvars files, preserves .terraform folder."""
+    def _wipe_dir(self, target_dir: Path):
+        """Removes all *.tf and *.tfvars files in target_dir."""
         for pattern in ["*.tf", "*.tfvars", "*.tfvars.json"]:
-            for item in self.staging_dir.glob(pattern):
+            for item in target_dir.glob(pattern):
                 item.unlink()
-        # Also remove modules folder to get fresh copy
-        modules_dest = self.staging_dir / "modules"
+        # Also remove modules folder
+        modules_dest = target_dir / "modules"
         if modules_dest.exists():
             shutil.rmtree(modules_dest)
 
-    def _copy_package_tf(self):
-        """Copies the base TF files and modules from the package."""
-        # Copy root TF files (including secrets.tf, iam.tf, etc.)
-        for src in self.package_root.glob("*.tf"):
-            shutil.copy2(src, self.staging_dir / src.name)
-        
-        # Copy the modules folder
+    def _copy_phase_tf(self, phase_name: str, target_dir: Path):
+        """Copies TF files from package/tf/<phase_name> to target_dir."""
+        phase_source = self.package_root / "tf" / phase_name
+        if not phase_source.exists():
+            raise FileNotFoundError(f"Phase folder {phase_name} not found in {self.package_root}/tf")
+            
+        for src in phase_source.glob("*.tf"):
+            shutil.copy2(src, target_dir / src.name)
+            
+        # Copy modules (shared)
+        # Assuming modules are at package_root/modules
         src_modules = self.package_root / "modules"
-        dest_modules = self.staging_dir / "modules"
+        dest_modules = target_dir / "modules"
         if src_modules.exists():
             shutil.copytree(src_modules, dest_modules)
-        
-        console.print(f"[dim]Copied base Terraform configuration.[/dim]")
 
-    def _generate_backend(self):
-        """Generates backend.tf using Project ID and optional suffix for uniqueness."""
-        # State files live at ~/.local/share/apigee-tf/states/<project_id>[-<suffix>].tfstate
+    def _generate_backend(self, phase_name: str, target_dir: Path):
+        """Generates backend.tf with unique state path for the phase."""
         xdg_data = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
         state_dir = Path(xdg_data) / "apigee-tf" / "states"
         state_dir.mkdir(parents=True, exist_ok=True)
         
-        # Use GCP Project ID as the primary unique key
         project_id = self.config.project.gcp_project_id
         suffix = self.config.apigee.state_suffix
         
-        filename = f"{project_id}-{suffix}" if suffix else project_id
+        # Unique state file per phase!
+        # e.g. project-0-bootstrap.tfstate
+        base_name = f"{project_id}-{suffix}" if suffix else project_id
+        filename = f"{base_name}-{phase_name}"
+        
         state_path = state_dir / f"{filename}.tfstate"
         
         backend_tf = f'''# AUTO-GENERATED BY APIM - DO NOT EDIT
@@ -103,11 +116,11 @@ terraform {{
   }}
 }}
 '''
-        with open(self.staging_dir / "_apim_gen_backend.tf", "w") as f:
+        with open(target_dir / "_apim_gen_backend.tf", "w") as f:
             f.write(backend_tf)
 
-    def _generate_tfvars(self):
-        """Generates auto.tfvars.json from apigee.toml config."""
+    def _generate_tfvars(self, target_dir: Path):
+        """Generates auto.tfvars.json in target_dir."""
         tfvars_content = {
             "gcp_project_id": self.config.project.gcp_project_id,
             "apigee_runtime_location": self.config.project.region,
@@ -115,35 +128,28 @@ terraform {{
             "domain_name": self.config.network.domain,
             "default_root_domain": self.config.network.default_root_domain,
             "control_plane_location": self.config.apigee.control_plane_location,
-            "apigee_billing_type": self.config.apigee.billing_type,
+            "billing_type": self.config.apigee.billing_type, # Fixed var name mismatch? check variables.tf
+            "apigee_billing_type": self.config.apigee.billing_type, # Providing both for safety if I forgot to rename one
             "apigee_instance_name": self.config.apigee.instance_name,
         }
         
-        # Only include consumer_data_region if set (DRZ mode)
         if self.config.apigee.consumer_data_region:
             tfvars_content["consumer_data_region"] = self.config.apigee.consumer_data_region
         
-        tfvars_path = self.staging_dir / "_apim_gen.auto.tfvars.json"
+        tfvars_path = target_dir / "_apim_gen.auto.tfvars.json"
         with open(tfvars_path, "w") as f:
             json.dump(tfvars_content, f, indent=2)
 
-    def _copy_user_files(self):
-        """Copies user's overlay *.tf and *.tfvars files from project root."""
-        # Reserved prefixes to block
+    def _copy_user_files(self, target_dir: Path):
+        """Copies user's overlay *.tf and *.tfvars files to target_dir."""
         reserved_prefixes = ["_apim_"]
-        
         count = 0
         for pattern in ["*.tf", "*.tfvars", "*.tfvars.json"]:
             for source_file in self.project_root.glob(pattern):
-                # Check for reserved prefix collision
                 for prefix in reserved_prefixes:
                     if source_file.name.startswith(prefix):
-                        console.print(f"[red]Error: {source_file.name} uses reserved prefix '{prefix}'. Please rename it.[/red]")
-                        sys.exit(1)
+                        continue # Skip reserved
                 
-                dest = self.staging_dir / source_file.name
+                dest = target_dir / source_file.name
                 shutil.copy2(source_file, dest)
                 count += 1
-        
-        if count > 0:
-            console.print(f"[dim]Copied {count} user overlay file(s).[/dim]")

@@ -25,22 +25,6 @@ locals {
   apigee_endpoint = (var.control_plane_location != null && var.control_plane_location != "") ? "https://${var.control_plane_location}-apigee.googleapis.com/v1/" : ""
 }
 
-# 1. Bootstrap Provider - YOUR IDENTITY (ADC)
-# Used for creating SA, Group, IAM bindings - things that must run as the user
-provider "google" {
-  alias   = "bootstrap"
-  project               = var.gcp_project_id
-  billing_project       = var.gcp_project_id
-  user_project_override = true
-}
-
-provider "google-beta" {
-  alias   = "bootstrap"
-  project               = var.gcp_project_id
-  billing_project       = var.gcp_project_id
-  user_project_override = true
-}
-
 # 2. Default Provider - SA IDENTITY (via env var GOOGLE_IMPERSONATE_SERVICE_ACCOUNT)
 # CLI sets this env var to impersonate terraform-deployer
 # Used for all other resources
