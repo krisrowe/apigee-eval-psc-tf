@@ -46,7 +46,7 @@ def status_cmd(ctx, refresh):
     
     if status.is_drz:
         table.add_row("[bold]Control Plane:[/bold]", status.config.control_plane_location)
-        table.add_row("[bold]Consumer Region:[/bold]", status.config.consumer_data_region)
+        table.add_row("[bold]Consumer Data Region:[/bold]", status.config.consumer_data_region)
     else:
         table.add_row("[bold]Analytics Region:[/bold]", status.config.analytics_region)
         

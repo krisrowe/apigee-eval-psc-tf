@@ -40,7 +40,8 @@ def list_cmd():
     table.add_column("Project ID", style="cyan")
     table.add_column("Billing", style="green")
     table.add_column("DRZ", style="blue")
-    table.add_column("Cons. Region", style="yellow")
+    table.add_column("CP", style="blue")
+    table.add_column("Cons. Data Region", style="yellow")
     table.add_column("Runtime Region", style="red")
     table.add_column("SSL", style="magenta")
     
@@ -49,6 +50,7 @@ def list_cmd():
             p.project_id,
             p.config.billing_type,
             "Yes" if p.is_drz else "No",
+            p.config.control_plane_location or "-",
             p.config.consumer_data_region or p.config.analytics_region or "-",
             p.config.runtime_location,
             p.ssl_status

@@ -35,21 +35,32 @@ def map_state_to_status(state_dict: dict) -> ApigeeProjectStatus:
     ssl_status = ssl_res.get("instances", [{}])[0].get("attributes", {}).get("managed", [{}])[0].get("status", "-")
 
     # 5. Build Config (Immutable fields)
-    # control_plane_location is not in the resource attributes directly in standard provider, 
-    # but we can infer it or rely on it being in the state's variables/outputs if needed.
-    # For now, we use what's in the Org Resource.
+    tf_consumer_loc = org_attrs.get("api_consumer_data_location")
+    tf_analytics_loc = org_attrs.get("analytics_region")
     
-    cp_loc = org_attrs.get("apigee_project_id", "").split("-")[0] # Rough heuristic if not explicit
-    # Better: check for DRZ properties
-    is_drz = org_attrs.get("disable_vpc_peering", False) # Often true for DRZ/PSC
+    # DRZ Detection
+    is_drz = bool(tf_consumer_loc)
     
+    # Infer Control Plane Location (Jurisdiction)
+    control_plane_location = None
+    
+    if is_drz and tf_consumer_loc:
+        if "northamerica" in tf_consumer_loc: control_plane_location = "ca"
+        elif "europe" in tf_consumer_loc: control_plane_location = "eu"
+        elif "australia" in tf_consumer_loc: control_plane_location = "au"
+        elif "asia" in tf_consumer_loc: control_plane_location = "ap"
+        elif "southamerica" in tf_consumer_loc: control_plane_location = "sa"
+        elif "me-" in tf_consumer_loc: control_plane_location = "me"
+        elif "in-" in tf_consumer_loc: control_plane_location = "in"
+        else: control_plane_location = "us" # Fallback
+
     config = ApigeeOrgConfig(
         billing_type=org_attrs.get("billing_type", "-"),
         drz=is_drz,
-        analytics_region=org_attrs.get("analytics_region"),
+        analytics_region=tf_analytics_loc,
         runtime_location=runtime_region,
-        control_plane_location=cp_loc if is_drz else None,
-        consumer_data_region=org_attrs.get("api_consumer_data_location")
+        control_plane_location=control_plane_location,
+        consumer_data_region=tf_consumer_loc
     )
 
     return ApigeeProjectStatus(
