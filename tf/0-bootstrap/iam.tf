@@ -85,11 +85,9 @@ resource "google_iam_deny_policy" "protect_deletes" {
   
   rules {
     deny_rule {
-      denied_principals = ["group:apigee-admins@${local.org_domain}"]
+      denied_principals = ["principalSet://goog/group/apigee-admins@${local.org_domain}"]
       denied_permissions = [
-        "secretmanager.secrets.delete",
-        "apigee.instances.delete",
-        "apigee.organizations.delete"
+        "secretmanager.googleapis.com/secrets.delete"
       ]
     }
   }

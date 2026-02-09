@@ -140,23 +140,74 @@ def import_cmd(ctx, project_id, template_name, force):
         stager = TerraformStager(config)
         terraform_bin = shutil.which("terraform")
         
+        # Prepare Environment for Terraform (Quota Project)
+        env = os.environ.copy()
+        env["GOOGLE_CLOUD_QUOTA_PROJECT"] = config.project.gcp_project_id
+        
         console.print("\n[bold dim]Phase 0: Bootstrapping Identity...[/bold dim]")
         
-        # 4a. Attempt to Import Service Account (Deterministic ID)
-        # We need to stage 0-bootstrap manually first to import into it
+        # 4a. Stage 0-bootstrap to enable imports
         bootstrap_staging = stager.stage_phase("0-bootstrap")
-        subprocess.run([terraform_bin, "init", "-input=false"], cwd=bootstrap_staging, check=True)
+        subprocess.run([terraform_bin, "init", "-input=false"], cwd=bootstrap_staging, check=True, env=env)
         
+        # 4b. Import Service Account
         sa_id = f"projects/{project_id}/serviceAccounts/terraform-deployer@{project_id}.iam.gserviceaccount.com"
-        import_sa_cmd = [
+        console.print("[dim]Attempting adoption of Service Account...[/dim]")
+        subprocess.run([
             terraform_bin, "import", "-input=false", "-lock=false",
-            "google_service_account.deployer",
-            sa_id
-        ]
-        # Run import, ignore failure (if it doesn't exist, apply will create it)
-        subprocess.run(import_sa_cmd, cwd=bootstrap_staging, capture_output=True)
+            "google_service_account.deployer", sa_id
+        ], cwd=bootstrap_staging, capture_output=True, env=env)
 
-        # 4b. Run Apply (Create remaining or update imported)
+        # 4c. Import Deny Policy
+        # ID Format: policies/cloudresourcemanager.googleapis.com%2Fprojects%2F<PROJECT_ID>%2Fdenypolicies%2Fprotect-deletes
+        encoded_parent = f"cloudresourcemanager.googleapis.com%2Fprojects%2F{project_id}"
+        policy_id = f"policies/{encoded_parent}%2Fdenypolicies%2Fprotect-deletes"
+        console.print("[dim]Attempting adoption of Deny Policy...[/dim]")
+        subprocess.run([
+            terraform_bin, "import", "-input=false", "-lock=false", 
+            "google_iam_deny_policy.protect_deletes[0]", policy_id
+        ], cwd=bootstrap_staging, capture_output=True, env=env)
+
+        # 4d. Import Admin Group
+        try:
+            # 1. Get Parent Org ID
+            org_id_proc = subprocess.run([
+                "gcloud", "projects", "describe", project_id,
+                "--format=value(parent.id)"
+            ], capture_output=True, text=True)
+            org_id = org_id_proc.stdout.strip()
+            
+            if org_id:
+                # 2. Get Domain (displayName)
+                domain_proc = subprocess.run([
+                    "gcloud", "organizations", "describe", org_id,
+                    "--format=value(displayName)"
+                ], capture_output=True, text=True)
+                domain = domain_proc.stdout.strip()
+                
+                if domain:
+                    group_email = f"apigee-admins@{domain}"
+                    console.print(f"[dim]Attempting adoption of Admin Group ({group_email})...[/dim]")
+                    
+                    # 3. Lookup Group ID
+                    group_id_proc = subprocess.run([
+                        "gcloud", "identity", "groups", "describe", group_email,
+                        "--project", project_id,
+                        "--format=value(name)"
+                    ], capture_output=True, text=True)
+                    
+                    group_id = group_id_proc.stdout.strip()
+                    
+                    # 4. Import
+                    if group_id and group_id_proc.returncode == 0:
+                        subprocess.run([
+                            terraform_bin, "import", "-input=false", "-lock=false", 
+                            "google_cloud_identity_group.apigee_admins", group_id
+                        ], cwd=bootstrap_staging, capture_output=True, env=env)
+        except Exception:
+            pass
+
+        # 4e. Run Apply
         sa_email = _run_bootstrap_folder(stager, config)
         if not sa_email:
             ctx.exit(1)
@@ -164,7 +215,7 @@ def import_cmd(ctx, project_id, template_name, force):
         console.print(f"\n[bold dim]Phase 1: Importing Organization ({project_id})...[/bold dim]")
         main_staging = stager.stage_phase("1-main")
         
-        subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True)
+        subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True, env=env)
         
         cmd = [
             terraform_bin, "import", "-input=false", "-lock=false", 
@@ -172,7 +223,7 @@ def import_cmd(ctx, project_id, template_name, force):
             f"organizations/{project_id}"
         ]
         
-        env = os.environ.copy()
+        # Add impersonation for Phase 1
         env["GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"] = sa_email
         
         console.print(f"[dim]Executing: {' '.join(cmd)}[/dim]")
