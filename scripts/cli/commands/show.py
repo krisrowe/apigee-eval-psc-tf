@@ -12,10 +12,11 @@ console = Console()
 @click.pass_context
 def show_cmd(ctx, raw):
     """Show configuration and resource status for the local project."""
+    # 1. Resolve Local Paths
     var_file, state_file = get_project_paths()
     
     if not var_file.exists():
-        console.print(f"[red]Error: No local apigee.tfvars found in CWD.[/red]")
+        console.print(f"[red]Error: No local configuration file found in CWD.[/red]")
         ctx.exit(1)
 
     if raw:
@@ -23,43 +24,41 @@ def show_cmd(ctx, raw):
             console.print(f.read())
         return
 
-    vars_dict = load_vars()
-    project_id = vars_dict.get('gcp_project_id')
-    
+    # 2. Local Status
     console.print(f"\n[bold underline]LOCAL PROJECT STATUS[/bold underline]")
     console.print(f"  [bold]Config:[/bold] {str(var_file)}")
     console.print(f"  [bold]State:[/bold]  {str(state_file) if state_file.exists() else '[yellow]NOT INITIALIZED[/yellow]'}")
     
-    # Live Probing
+    # 3. Project Configuration & Cloud Status
+    vars_dict = load_vars()
+    project_id = vars_dict.get('gcp_project_id')
+
     if project_id:
-        console.print(f"\n[bold]CLOUD STATUS (Live API):[/bold]")
+        console.print(f"\n[bold]CLOUD STATUS (via Terraform State):[/bold]")
         provider = get_cloud_provider()
-        org = provider.get_org(project_id)
-        if org:
-            console.print(f"    [green]✓ Apigee Organization found.[/green]")
-            
-            # Show Envs
-            envs = provider.get_environments(project_id)
-            if envs:
-                console.print(f"    [dim]Environments: {', '.join(envs)}[/dim]")
+        status = provider.get_status(project_id)
+        
+        if status:
+             table = Table(show_header=False, box=None)
+             table.add_row("[bold]Billing:[/bold]", status.config.billing_type)
+             table.add_row("[bold]DRZ:[/bold]", "Yes" if status.is_drz else "No")
+             if status.is_drz:
+                 table.add_row("[bold]CP:[/bold]", status.config.control_plane_location)
+                 table.add_row("[bold]Data Region:[/bold]", status.config.consumer_data_region)
+             
+             table.add_row("[bold]Runtime Region:[/bold]", status.config.runtime_location)
+             console.print(table)
+             
+             if status.environments:
+                 console.print(f"    [green]✓ Environments:[/green] [dim]{', '.join(status.environments)}[/dim]")
+             if status.instances:
+                 console.print(f"    [green]✓ Instances:[/green] [dim]{', '.join(status.instances)}[/dim]")
+             
+             console.print(f"    [green]✓ SSL Status:[/green] {status.ssl_status}")
+        else:
+             console.print(f"    [yellow]! Could not retrieve status for {project_id}.[/yellow]")
 
-            # DNS/SSL if nickname exists (default domain derivation uses nickname)
-            nickname = vars_dict.get('project_nickname')
-            if nickname:
-                # DNS Zone Check
-                ns = provider.get_dns_nameservers(project_id)
-                if ns:
-                    console.print(f"    [green]✓ DNS Zone found.[/green] [dim]Nameservers: {', '.join(ns[:2])}...[/dim]")
-                
-                # Derive hostname similar to main.tf logic
-                # For now, we'll just check if it's likely configured
-                domain = vars_dict.get('domain_name')
-                if domain:
-                    ssl = provider.get_ssl_certificate_status(project_id, domain)
-                    status = ssl.get("status", "UNKNOWN")
-                    console.print(f"    [green]✓ Domain:[/green] {domain} [dim](SSL: {status})[/dim]")
-
-    # Tracked Resources
+    # 4. Tracked Resources (Raw Table)
     console.print(f"\n[bold]TRACKED RESOURCES (Terraform State):[/bold]")
     state = load_tfstate()
     if not state:

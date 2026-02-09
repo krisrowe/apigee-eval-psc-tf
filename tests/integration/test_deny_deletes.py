@@ -17,25 +17,15 @@ def test_deny_deletes_enforcement(existing_org_project_id, tmp_path):
     6. Restore Deny Policy (as User).
     """
     
-    # Setup Config in tmp_path
+    # Setup Config in tmp_path (FLAT structure)
     tfvars_content = f"""
-    project {{
-        name = "integration-test"
-        gcp_project_id = "{existing_org_project_id}"
-        region = "us-central1"
-    }}
-    
-    apigee {{
-        billing_type = "PAYG"
-        control_plane_location = "us" 
-        analytics_region = "us-central1"
-    }}
-    
-    network {{
-        domain = "api.example.com"
-    }}
-    """
-    (tmp_path / "apigee.tfvars").write_text(tfvars_content)
+gcp_project_id          = "{existing_org_project_id}"
+apigee_runtime_location = "us-central1"
+apigee_analytics_region = "us-central1"
+apigee_billing_type     = "PAYG"
+control_plane_location  = "us"
+"""
+    (tmp_path / "terraform.tfvars").write_text(tfvars_content)
     
     # Load Config
     config = ConfigLoader.load(tmp_path)
@@ -49,8 +39,7 @@ def test_deny_deletes_enforcement(existing_org_project_id, tmp_path):
             **kwargs
         )
 
-    print(f"
-[Test] Target Project: {existing_org_project_id}")
+    print(f"\n[Test] Target Project: {existing_org_project_id}")
 
     # Step 1: Bootstrap & Create Secret (Policy ON)
     # This runs bootstrap automatically if needed.

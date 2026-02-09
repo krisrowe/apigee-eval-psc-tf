@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from .base import CloudProvider
+from ..schemas import ApigeeProjectStatus, ApigeeOrgConfig
 
 class MockCloudProvider(CloudProvider):
     """
@@ -10,10 +11,8 @@ class MockCloudProvider(CloudProvider):
         self.orgs: Dict[str, Dict[str, Any]] = {}
         self.project_labels: Dict[str, Dict[str, str]] = {}
         self.instances: Dict[str, List[Dict[str, Any]]] = {}
-        self.envgroups: Dict[str, List[Dict[str, Any]]] = {}
         self.environments: Dict[str, List[str]] = {}
         self.ssl_certs: Dict[str, Dict[str, Any]] = {}
-        self.dns_zones: Dict[str, List[str]] = {}
         self.deny_policies: Dict[str, Dict[str, Any]] = {}
         self.permissions: Dict[str, List[str]] = {} # principal -> [permissions]
 
@@ -23,27 +22,41 @@ class MockCloudProvider(CloudProvider):
                 return pid
         return None
 
-    def get_org(self, org_id: str) -> Optional[Dict[str, Any]]:
-        return self.orgs.get(org_id)
+    def get_status(self, project_id: str) -> Optional[ApigeeProjectStatus]:
+        org_data = self.orgs.get(project_id)
+        if not org_data:
+            return None
+            
+        inst_list = self.instances.get(project_id, [])
+        envs = self.environments.get(project_id, [])
+        
+        # Build Config component
+        consumer_data_region = org_data.get("api_consumer_data_location")
+        is_drz = bool(consumer_data_region)
+        
+        config = ApigeeOrgConfig(
+            billing_type=org_data.get("billing_type", "EVALUATION"),
+            drz=is_drz,
+            runtime_location=inst_list[0].get("location") if inst_list else "-",
+            analytics_region=org_data.get("analytics_region"),
+            consumer_data_region=consumer_data_region,
+            control_plane_location="ca" if is_drz else None
+        )
 
-    def list_instances(self, org_id: str) -> List[Dict[str, Any]]:
-        return self.instances.get(org_id, [])
+        return ApigeeProjectStatus(
+            project_id=project_id,
+            config=config,
+            subscription_type=org_data.get("subscription_type", "TRIAL"),
+            environments=envs,
+            instances=[i["name"] for i in inst_list],
+            ssl_status="ACTIVE" if self.ssl_certs.get(project_id) else "-"
+        )
 
-    def list_envgroups(self, org_id: str) -> List[Dict[str, Any]]:
-        return self.envgroups.get(org_id, [])
+    # Ad-hoc methods used by legacy test setup or direct mock manipulation
+    def get_org(self, project_id): return self.orgs.get(project_id)
+    def get_environments(self, project_id): return self.environments.get(project_id, [])
 
-    def get_environments(self, org_id: str) -> List[str]:
-        return self.environments.get(org_id, [])
-
-    def get_ssl_certificate_status(self, project_id: str, hostname: str) -> Dict[str, Any]:
-        return self.ssl_certs.get(f"{project_id}/{hostname}", {"status": "NOT_FOUND"})
-
-    def get_dns_nameservers(self, project_id: str, zone_name: str = "apigee-dns") -> List[str]:
-        return self.dns_zones.get(f"{project_id}/{zone_name}", [])
-
-    def get_deny_policy(self, project_id: str, policy_name: str) -> Optional[Dict[str, Any]]:
-        return self.deny_policies.get(f"{project_id}/{policy_name}")
-
+    # Ad-hoc methods used by Unit Tests (e.g. IAM Safety)
     def check_permission(self, project_id: str, principal: str, permission: str) -> bool:
         """
         Simulation logic: 

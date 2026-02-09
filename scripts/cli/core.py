@@ -3,6 +3,7 @@ import urllib.error
 import urllib.parse
 import json
 import subprocess
+import os
 from pathlib import Path
 import hcl2
 

@@ -4,31 +4,10 @@ import os
 from pathlib import Path
 from rich.console import Console
 from scripts.cli.config import Config
+from scripts.cli.paths import get_cache_dir, get_state_path
 
 logger = logging.getLogger(__name__)
 console = Console()
-
-def get_data_dir() -> Path:
-    """
-    Returns the global data directory for apigee-tf state and staging.
-    Default: ~/.local/share/apigee-tf
-    Override: APIGEE_TF_DATA_DIR env var
-    """
-    data_home = os.environ.get("APIGEE_TF_DATA_DIR")
-    if data_home:
-        return Path(data_home)
-    return Path.home() / ".local/share/apigee-tf"
-
-def get_cache_dir() -> Path:
-    """
-    Returns the cache directory for ephemeral staging.
-    Default: ~/.cache/apigee-tf
-    Override: XDG_CACHE_HOME
-    """
-    xdg_cache = os.environ.get("XDG_CACHE_HOME")
-    if xdg_cache:
-        return Path(xdg_cache) / "apigee-tf"
-    return Path.home() / ".cache" / "apigee-tf"
 
 class TerraformStager:
     def __init__(self, config: Config):
@@ -159,13 +138,12 @@ class TerraformStager:
 
     def _generate_backend(self, phase_name: str, target_dir: Path):
         """Generates a local backend configuration."""
-        # State file location: <DATA_DIR>/<project_id>[/<suffix>]/tf/<phase>/terraform.tfstate
-        # Persistent storage (XDG_DATA_HOME)
-        state_root = get_data_dir() / self.config.project.gcp_project_id
-        if self.config.apigee.state_suffix:
-            state_root = state_root / self.config.apigee.state_suffix
-            
-        state_path = state_root / "tf" / phase_name / "terraform.tfstate"
+        # Use centralized path logic
+        state_path = get_state_path(
+            self.config.project.gcp_project_id, 
+            phase=phase_name, 
+            suffix=self.config.apigee.state_suffix
+        )
         state_path.parent.mkdir(parents=True, exist_ok=True)
         
         backend_config = f'''
