@@ -99,7 +99,7 @@ apim apis test --proxy-name weather-api --bundle ./apiproxies/weather-api
 
 ---
 
-## Configuration Reference (`apigee.tfvars`)
+## Configuration Reference (`terraform.tfvars`)
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |

@@ -104,15 +104,32 @@ def import_cmd(ctx, project_id, template_name, force):
              else: cp_loc = "us" # Fallback
 
         # Need to find Runtime Region (Instance)
-        # List instances
-        # We reuse the auth/url base we found or default
-        # Simplify: Just assume we found Org details enough for tfvars
-        # But we need runtime_location for variables.tf
-        
-        # We need to list instances to get location
-        # This requires another API call.
-        # ... For simplicity, we might skip runtime_location if we can't find it easily?
-        # No, it's required.
+        instance_loc = "us-central1" # Fail-safe default
+        try:
+            status, inst_resp = api_request("GET", f"organizations/{project_id}/instances")
+            
+            # If our simple api_request failed (404/403) due to regional control plane, try the CP-aware URL
+            if status != 200 and cp_loc:
+                 token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
+                 url = f"https://{cp_loc}-apigee.googleapis.com/v1/organizations/{project_id}/instances"
+                 import urllib.request
+                 req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+                 try:
+                     with urllib.request.urlopen(req) as r:
+                         inst_resp = json.loads(r.read().decode())
+                         status = 200
+                 except:
+                     pass
+
+            if status == 200 and "instances" in inst_resp and len(inst_resp["instances"]) > 0:
+                first_inst = inst_resp["instances"][0]
+                instance_loc = first_inst.get("location", instance_loc)
+                console.print(f"[dim]Detected Runtime Location: {instance_loc}[/dim]")
+            else:
+                console.print(f"[yellow]Warning: No instances found or API failed. Defaulting to {instance_loc}.[/yellow]")
+
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not detect instance location ({e}). Defaulting to {instance_loc}.[/yellow]")
         
         schema = ApigeeOrgConfig(
             billing_type=resp.get("billingType"),
@@ -120,9 +137,8 @@ def import_cmd(ctx, project_id, template_name, force):
             analytics_region=resp.get("analyticsRegion"),
             consumer_data_region=consumer_loc,
             control_plane_location=cp_loc,
-            runtime_location="us-central1" # Placeholder! We need to fetch instances.
+            runtime_location=instance_loc
         )
-        console.print("[yellow]Warning: Runtime location defaulting to 'us-central1'. Update terraform.tfvars if different.[/yellow]")
 
     # 3. Write Config
     try:
@@ -212,29 +228,62 @@ def import_cmd(ctx, project_id, template_name, force):
         if not sa_email:
             ctx.exit(1)
             
-        console.print(f"\n[bold dim]Phase 1: Importing Organization ({project_id})...[/bold dim]")
+        # Helper for Phase 1 Imports
+        def try_import(resource_addr, resource_id):
+            console.print(f"[dim]  Checking {resource_addr}...[/dim]")
+            # Check state first to avoid re-importing (which errors)
+            state_check = subprocess.run(
+                [terraform_bin, "state", "list", resource_addr],
+                cwd=main_staging, capture_output=True, text=True, env=env
+            )
+            if resource_addr in state_check.stdout:
+                console.print(f"[green]    Already in state.[/green]")
+                return
+
+            # Attempt Import
+            proc = subprocess.run(
+                [terraform_bin, "import", "-input=false", "-lock=false", resource_addr, resource_id],
+                cwd=main_staging, capture_output=True, text=True, env=env
+            )
+            if proc.returncode == 0:
+                console.print(f"[green]    Imported![/green]")
+            else:
+                # If failure is "resource doesn't exist", that's fine - we will create it later.
+                if "Cannot import non-existent" in proc.stderr or "404" in proc.stderr:
+                    console.print(f"[dim]    Not found in cloud (will be created).[/dim]")
+                else:
+                    # Generic error warning
+                    console.print(f"[yellow]    Import skipped/failed (will try creation): {proc.stderr.splitlines()[0]}[/yellow]")
+
+        console.print(f"\n[bold dim]Phase 1: Importing Resources ({project_id})...[/bold dim]")
         main_staging = stager.stage_phase("1-main")
-        
-        subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True, env=env)
-        
-        cmd = [
-            terraform_bin, "import", "-input=false", "-lock=false", 
-            "google_apigee_organization.apigee_org", 
-            f"organizations/{project_id}"
-        ]
         
         # Add impersonation for Phase 1
         env["GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"] = sa_email
         
-        console.print(f"[dim]Executing: {' '.join(cmd)}[/dim]")
-        result = subprocess.run(cmd, cwd=main_staging, env=env)
+        subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True, env=env)
         
-        if result.returncode == 0:
-            console.print("[green]✓ Import Successful[/green]")
-            console.print("Run 'apim update' to align remaining resources.")
-        else:
-            console.print("[red]Import Failed[/red]")
-            ctx.exit(result.returncode)
+        # 1. Organization (Critical)
+        try_import("google_apigee_organization.apigee_org", f"organizations/{project_id}")
+        
+        # 2. Network (Often pre-exists)
+        try_import("google_compute_network.apigee_network", f"projects/{project_id}/global/networks/apigee-network")
+        
+        # 3. Instance (Standard region or overrides)
+        # Note: We guess "us-central1" (or var.apigee_runtime_location) based on our simplistic discovery.
+        # Ideally we'd list instances to get the real name/location.
+        # For now, we try the most likely name: "us-central1" in org "project_id"
+        instance_loc = schema.runtime_location or "us-central1"
+        try_import("google_apigee_instance.apigee_instance", f"organizations/{project_id}/instances/{instance_loc}")
+        
+        # 4. Environment (Standard "dev")
+        try_import("google_apigee_environment.apigee_env[\"dev\"]", f"organizations/{project_id}/environments/dev")
+        
+        # 5. Environment Group (Standard "eval-group")
+        try_import("google_apigee_envgroup.envgroup[\"eval-group\"]", f"organizations/{project_id}/envgroups/eval-group")
+
+        console.print("[green]✓ Import Discovery Complete[/green]")
+        console.print("Run 'apim update' to reconcile configuration.")
             
     except Exception as e:
         console.print(f"[red]Execution Error:[/red] {e}")
