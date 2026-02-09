@@ -163,11 +163,9 @@ terraform {{
             "apigee_runtime_location": self.config.project.region,
             "apigee_analytics_region": self.config.apigee.analytics_region,
             "domain_name": self.config.network.domain,
-            "default_root_domain": self.config.network.default_root_domain,
             "control_plane_location": self.config.apigee.control_plane_location,
             "billing_type": self.config.apigee.billing_type, 
             "apigee_billing_type": self.config.apigee.billing_type,
-            "apigee_instance_name": self.config.apigee.instance_name,
         }
         
         if self.config.apigee.consumer_data_region:

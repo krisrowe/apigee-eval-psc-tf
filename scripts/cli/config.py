@@ -29,7 +29,6 @@ class ApigeeConfig:
 @dataclass
 class NetworkConfig:
     domain: Optional[str] = None
-    default_root_domain: Optional[str] = None
 
 @dataclass
 class Config:
@@ -123,8 +122,7 @@ class ConfigLoader:
                 state_suffix=get_val("apigee", "state_suffix", "state_suffix"),
             ),
             network=NetworkConfig(
-                domain=get_val("network", "domain", "domain_name"),
-                default_root_domain=sdk_config.default_root_domain or os.environ.get("APIM_DEFAULT_ROOT_DOMAIN")
+                domain=get_val("network", "domain", "domain_name")
             ),
             root_dir=working_dir.resolve()
         )

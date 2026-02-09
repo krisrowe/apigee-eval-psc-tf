@@ -6,19 +6,8 @@ locals {
     eval-group = ["dev"]
   }
 
-  # Auto-derive hostname from CLI config: {project_nickname}.{default_root_domain}
-  derived_hostname = try(
-    var.default_root_domain != null && var.default_root_domain != ""
-    ? "${var.project_nickname}.${var.default_root_domain}"
-    : null,
-    null
-  )
-
-  # Final hostname fallback chain:
-  # 1. Explicit var.domain_name from tfvars (highest priority)
-  # 2. Derived from CLI config default_root_domain (passed as var)
-  # 3. null (IP-only access, will trigger warning)
-  hostname = try(coalesce(var.domain_name, local.derived_hostname), null)
+  # Final hostname: Explicit var.domain_name from tfvars (or null for IP-only)
+  hostname = var.domain_name
 }
 
 
@@ -28,12 +17,6 @@ resource "null_resource" "hostname_warning" {
 
   provisioner "local-exec" {
     command = "echo 'WARNING: No domain_name configured. Apigee will only be accessible via IP address. Set domain_name in tfvars or configure default_root_domain via: ./util config set default_root_domain example.com'"
-  }
-}
-
-resource "null_resource" "project_label" {
-  provisioner "local-exec" {
-    command = "gcloud alpha projects update ${var.gcp_project_id} --update-labels=apigee-tf=${var.project_nickname}"
   }
 }
 

@@ -9,12 +9,6 @@ variable "domain_name" {
   default     = null
 }
 
-variable "default_root_domain" {
-  description = "The default root domain for auto-deriving hostnames."
-  type        = string
-  default     = null
-}
-
 variable "apigee_analytics_region" {
   description = "The analytics region for the Apigee organization."
   type        = string
@@ -29,12 +23,6 @@ variable "apigee_runtime_location" {
 
 variable "apigee_instance_name" {
   description = "The name of the Apigee instance."
-  type        = string
-  default     = null
-}
-
-variable "project_nickname" {
-  description = "The nickname for this project."
   type        = string
   default     = null
 }

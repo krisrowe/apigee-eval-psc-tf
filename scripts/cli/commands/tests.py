@@ -42,6 +42,10 @@ def _run_deny_deletes_test(ctx):
         fake_secret=True,
         deletes_allowed=False,
         skip_impersonation=False,
+        targets=[
+            "google_secret_manager_secret.fake_secret",
+            "google_secret_manager_secret_version.fake_secret_v1"
+        ]
     )
     if exit_code != 0:
         console.print("[red]✗ Step 2 failed[/red]")
@@ -61,6 +65,10 @@ def _run_deny_deletes_test(ctx):
         fake_secret=False,
         deletes_allowed=False,
         skip_impersonation=False,
+        targets=[
+            "google_secret_manager_secret.fake_secret",
+            "google_secret_manager_secret_version.fake_secret_v1"
+        ]
     )
     if exit_code == 0:
         console.print("[red]✗ Step 3 FAILED - delete should have been blocked![/red]")
@@ -80,6 +88,10 @@ def _run_deny_deletes_test(ctx):
         fake_secret=True,
         deletes_allowed=True,
         skip_impersonation=True,
+        targets=[
+            "google_secret_manager_secret.fake_secret",
+            "google_secret_manager_secret_version.fake_secret_v1"
+        ]
     )
     if exit_code != 0:
         console.print("[red]✗ Step 4 failed[/red]")
@@ -99,6 +111,10 @@ def _run_deny_deletes_test(ctx):
         fake_secret=False,
         deletes_allowed=True,
         skip_impersonation=False,
+        targets=[
+            "google_secret_manager_secret.fake_secret",
+            "google_secret_manager_secret_version.fake_secret_v1"
+        ]
     )
     if exit_code != 0:
         console.print("[red]✗ Step 5 failed[/red]")
@@ -118,6 +134,10 @@ def _run_deny_deletes_test(ctx):
         fake_secret=False,
         deletes_allowed=False,
         skip_impersonation=True,
+        targets=[
+            "google_secret_manager_secret.fake_secret",
+            "google_secret_manager_secret_version.fake_secret_v1"
+        ]
     )
     if exit_code != 0:
         console.print("[red]✗ Step 6 failed[/red]")

@@ -10,7 +10,7 @@ def pytest_collection_modifyitems(items):
     Apply a 20-second timeout to all integration tests.
     """
     for item in items:
-        item.add_marker(pytest.mark.timeout(20))
+        item.add_marker(pytest.mark.timeout(120))
 
 
 

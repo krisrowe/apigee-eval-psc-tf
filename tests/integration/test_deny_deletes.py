@@ -32,10 +32,16 @@ control_plane_location  = "us"
     
     # Helper to run apply
     def apply(**kwargs):
+        # We target ONLY the resources needed for the deny-deletes test
+        # This allows us to run against existing projects without managing Orgs/Networks
         return run_terraform(
             config,
             "apply",
             auto_approve=True,
+            targets=[
+                "google_secret_manager_secret.fake_secret",
+                "google_secret_manager_secret_version.fake_secret_v1"
+            ],
             **kwargs
         )
 
@@ -44,15 +50,19 @@ control_plane_location  = "us"
     # Step 1: Bootstrap & Create Secret (Policy ON)
     # This runs bootstrap automatically if needed.
     print("Step 1: Create secret (Policy ON)...")
+    # Note: Phase 0 (Bootstrap) handles Deny Policy creation. 
+    # Phase 1 (Main) handles Secret creation.
     assert apply(fake_secret=True, deletes_allowed=False, skip_impersonation=False) == 0
 
     # Step 2: Try Delete (Policy ON) -> Should FAIL
     print("Step 2: Try Delete (Policy ON)...")
+    # Setting fake_secret=False should trigger deletion of the secret
     assert apply(fake_secret=False, deletes_allowed=False, skip_impersonation=False) != 0
 
     # Step 3: Remove Policy (As User)
     print("Step 3: Remove Policy (As User)...")
     # We keep the secret (fake_secret=True) but allow deletes (deletes_allowed=True)
+    # Phase 0 logic handles Deny Policy removal when deletes_allowed=True
     assert apply(fake_secret=True, deletes_allowed=True, skip_impersonation=True) == 0
 
     # Step 4: Delete Secret (Policy OFF) -> Should SUCCEED
