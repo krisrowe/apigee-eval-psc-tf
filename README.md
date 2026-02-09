@@ -38,35 +38,46 @@ make install
 
 ## Workflows
 
-### 1. New Project (Local Config Repo)
-Use this when you have a dedicated folder for your project's configuration.
+### 1. New Project (Greenfield)
+Initialize and deploy a new Apigee Organization using a strict template.
 
-1.  **Probe & Init**:
-    Create a local `apigee.tfvars` from an existing project:
+1.  **Create**:
+    Run `create` with your Project ID and a template (e.g., `ca-drz` or `us-central1`).
     ```bash
-    apim import --project my-project-id --template templates/ca-drz.json
+    # Uses packaged template 'ca-drz' (config/ca-drz.json)
+    apim create my-project-id ca-drz
+    ```
+    *This generates `terraform.tfvars` and deploys the infrastructure via Terraform.*
+
+2.  **Verify**:
+    The command will output the dashboard URL and status upon success.
+
+### 2. Ongoing Maintenance (Day 2+)
+Update an existing deployment after modifying `terraform.tfvars` or upgrading the CLI.
+
+1.  **Update**:
+    ```bash
+    apim update
+    ```
+    *This runs `terraform apply` to converge any configuration drift.*
+
+### 3. Import Existing (Adoption)
+Adopt an existing Apigee Organization into Terraform state management.
+
+1.  **Import**:
+    Provide the Project ID and the template that matches the existing configuration.
+    ```bash
+    apim import my-existing-project-id us-central1
+    ```
+    *This generates `terraform.tfvars`, bootstraps identity, and imports the Organization resource.*
+
+2.  **Align**:
+    Run update to import remaining resources and align configuration.
+    ```bash
+    apim update
     ```
 
-2.  **Verify & Apply**:
-    ```bash
-    apim plan
-    apim apply
-    ```
-
-### 2. Managing Multiple Projects (Aliases)
-The tool supports creating central aliases in `~/.config/apigee-tf/` if you prefer not to use local files.
-
-1.  **Register Alias**:
-    ```bash
-    apim import scotiabank --project scotiabank-480720
-    ```
-    
-2.  **Use Anywhere**:
-    ```bash
-    apim apply scotiabank
-    ```
-
-### 3. Verify & Test
+### 4. Verify & Test
 Run automated integration tests to ensure your proxies are accessible.
 ```bash
 apim apis test --proxy-name weather-api --bundle ./apiproxies/weather-api

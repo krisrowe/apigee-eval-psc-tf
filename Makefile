@@ -10,7 +10,10 @@ setup:
 	$(PIP) install -e .[dev] --index-url https://pypi.org/simple
 
 test: setup
-	$(VENV)/bin/pytest tests/
+	$(VENV)/bin/pytest tests/unit
+
+test-integration: setup
+	$(VENV)/bin/pytest tests/integration
 
 install:
 	cd . && pipx install -e . --force --pip-args="--index-url https://pypi.org/simple"

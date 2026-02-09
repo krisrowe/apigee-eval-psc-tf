@@ -89,14 +89,14 @@ def _ensure_meta_apis(project_id: str):
     else:
         console.print("[dim]Bootloader APIs verified.[/dim]")
 
-def _run_main_folder(stager: TerraformStager, config, sa_email: str, command: str, args: List[str]) -> int:
+def _run_main_folder(stager: TerraformStager, config, sa_email: str, command: str, args: List[str], config_files: List[str] = None) -> int:
     """
     Run 1-main folder.
     """
     console.print(f"\n[bold dim]Phase 1: Main Infrastructure (SA Identity: {sa_email})...[/bold dim]")
     
-    # 1. Stage main
-    main_staging = stager.stage_phase("1-main")
+    # 1. Stage main (Injecting Configs if provided)
+    main_staging = stager.stage_phase("1-main", config_files=config_files)
     
     terraform_bin = shutil.which("terraform")
     
@@ -105,14 +105,6 @@ def _run_main_folder(stager: TerraformStager, config, sa_email: str, command: st
     
     # 3. Apply/Plan (SA Identity)
     cmd = [terraform_bin, command, "-input=false", "-lock=false"] + args
-    
-    # Pass SA email as env var (or TF var if we used variable)
-    # Our providers.tf uses GOOGLE_IMPERSONATE_SERVICE_ACCOUNT env var? No, it uses 'access_token' data source usually?
-    # Wait, providers.tf in 1-main:
-    # "provider google { ... }" -> no impersonation config?
-    # Ah, I need to check how providers.tf was set up in 1-main.
-    # It said: "# 2. Default Provider - SA IDENTITY (via env var GOOGLE_IMPERSONATE_SERVICE_ACCOUNT)"
-    # So we must set the Env Var!
     
     env = os.environ.copy()
     env["GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"] = sa_email
@@ -125,6 +117,7 @@ def _run_main_folder(stager: TerraformStager, config, sa_email: str, command: st
 def run_terraform(
     config,
     command: str,
+    config_files: List[str] = None,
     auto_approve: bool = False,
     fake_secret: bool = False,
     deletes_allowed: bool = False,
@@ -138,12 +131,9 @@ def run_terraform(
     stager = TerraformStager(config)
     
     # Step 1: Bootstrap (Phase 0)
-    # We always run bootstrap to ensure state is healthy and get SA email.
-    # If skip_impersonation is True, we might skip this? No, we still need SA output if we plan to use it?
-    # If skip_impersonation is True, user wants to run MAIN as User.
-    
     sa_email = None
     if not skip_impersonation:
+        # Phase 0 does NOT receive user configs (as per design - user prefs overlay Main only)
         sa_email = _run_bootstrap_folder(stager, config, deletes_allowed=deletes_allowed, fake_secret=fake_secret)
         if not sa_email:
             return 1
@@ -161,19 +151,16 @@ def run_terraform(
     args.append(f"-var=fake_secret={str(fake_secret).lower()}")
     args.append(f"-var=allow_deletes={str(deletes_allowed).lower()}")
     
-    # If skip_impersonation, run as User (std env).
-    # If not, run as SA (env var injected in _run_main_folder).
-    
     if skip_impersonation:
         # Run main as user (Phase 1 but without SA env var)
          console.print("\n[bold dim]Phase 1: Main Infrastructure (User Identity - Skip Impersonation)...[/bold dim]")
-         main_staging = stager.stage_phase("1-main")
+         main_staging = stager.stage_phase("1-main", config_files=config_files)
          subprocess.run(["terraform", "init", "-input=false"], cwd=main_staging, check=True)
          cmd = ["terraform", command, "-input=false", "-lock=false"] + args
          result = subprocess.run(cmd, cwd=main_staging)
          return result.returncode
     else:
-        return _run_main_folder(stager, config, sa_email, command, args)
+        return _run_main_folder(stager, config, sa_email, command, args, config_files=config_files)
 
 
 @click.command()

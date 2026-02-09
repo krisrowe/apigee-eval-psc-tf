@@ -34,3 +34,49 @@ This repository uses a **Project-ID Centric** state management model:
 Before committing, ensure you run:
 - `consult precommit`: Scans for sensitive identifiers and PII.
 - `devws precommit`: Checks git history integrity.
+
+## Integration Testing
+
+Integration tests run against **REAL** Google Cloud Platform projects. They are located in `tests/integration/` and are excluded from the default `make test` command (which runs unit tests only).
+
+### Prerequisites
+
+### Prerequisites
+
+To run integration tests, you need target GCP projects. You can define these via **Environment Variables** (explicit) or **Labels** (auto-discovery).
+
+#### Option A: Environment Variables (Recommended for CI)
+
+| Variable | Description |
+|---|---|
+| `EXISTING_APIGEE_ORG_PROJECT_ID` | Project ID that **already has** a fully provisioned Apigee Organization. Used to test `import` and `update` idempotency. |
+| `NO_APIGEE_ORG_PROJECT_ID` | Project ID that has **NO** Apigee Organization (but has Billing and APIs enabled). Used to test `create` (Note: `create` takes ~45m). |
+
+#### Option B: Auto-Discovery via Labels (Recommended for Devs)
+
+The test runner can automatically find projects if you label them using `gcloud`:
+
+1. **Existing Org Project**:
+   ```bash
+   gcloud projects add-labels my-existing-proj --labels=apigee-tf=integration-test
+   ```
+
+2. **No Org Project** (Empty/Clean):
+   ```bash
+   gcloud projects add-labels my-missing-proj --labels=apigee-tf=missing
+   ```
+
+### Running Tests
+
+Run integration tests explicitly using `pytest`:
+
+```bash
+# Run all integration tests (will skip if no projects found)
+pytest tests/integration
+
+# Run with output to see which projects are selected
+pytest tests/integration -s
+```
+
+> [!WARNING]
+> Integration tests invoke real Terraform commands (`apply`, `import`) which **will modify infrastructure** and **incur costs**. Ensure you are using non-production sandbox projects.

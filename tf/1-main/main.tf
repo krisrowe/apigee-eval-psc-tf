@@ -94,7 +94,11 @@ resource "google_compute_network" "apigee_network" {
   depends_on              = [google_project_service.compute]
 }
 
-resource "google_apigee_organization" "apigee_org" {
+data "google_apigee_organization" "existing" {
+  project_id = var.gcp_project_id
+}
+
+resource "google_apigee_organization" "org" {
   project_id       = var.gcp_project_id
   
   # For DRZ: analytics_region must be null (not set), use api_consumer_data_location instead
@@ -112,6 +116,17 @@ resource "google_apigee_organization" "apigee_org" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [analytics_region, billing_type]
+
+    precondition {
+      condition = (
+        # If Org exists (analytics_region is not null), Input MUST match (or be null/default)
+        try(data.google_apigee_organization.existing.analytics_region, null) == null || 
+        var.apigee_analytics_region == null || 
+        try(data.google_apigee_organization.existing.analytics_region, "") == var.apigee_analytics_region
+      )
+      error_message = "Conflict! You asked for '${var.apigee_analytics_region}' but Org is '${try(data.google_apigee_organization.existing.analytics_region, "UNKNOWN")}'."
+    }
   }
 
   depends_on = [
@@ -127,7 +142,7 @@ resource "google_apigee_organization" "apigee_org" {
 resource "google_apigee_instance" "apigee_instance" {
   name     = coalesce(var.apigee_instance_name, var.apigee_runtime_location)
   location = var.apigee_runtime_location
-  org_id   = google_apigee_organization.apigee_org.id
+  org_id   = google_apigee_organization.org.id
 
   lifecycle {
     prevent_destroy = true
@@ -146,6 +161,10 @@ resource "google_apigee_envgroup" "envgroup" {
   name      = each.key
   org_id    = google_apigee_organization.apigee_org.id
   hostnames = local.hostname != null ? [local.hostname] : []
+
+  lifecycle {
+    ignore_changes = [hostnames]
+  }
 }
 
 resource "google_apigee_envgroup_attachment" "envgroup_attachment" {

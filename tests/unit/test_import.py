@@ -1,93 +1,89 @@
-import os
+import json
 import pytest
 from click.testing import CliRunner
 from scripts.cli.app import cli
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-def test_import_creates_vars_file_on_success(cloud_provider, monkeypatch, tmp_path):
-    """
-    Importing a valid project should create the local apigee.tfvars.
-    """
-    project_id = "test-project"
-    cloud_provider.orgs[project_id] = {"name": project_id}
-    cloud_provider.instances[project_id] = [{"name": "inst-1"}]
-    
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0)
-        
-        runner = CliRunner()
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-        
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["import", "--project", project_id])
-            
-            assert result.exit_code == 0
-            var_file = Path("apigee.tfvars")
-            assert var_file.exists()
-            assert f'gcp_project_id = "{project_id}"' in var_file.read_text()
+VALID_TEMPLATE = {
+    "billing_type": "EVALUATION",
+    "drz": False,
+    "runtime_location": "us-central1",
+    "analytics_region": "us-central1"
+}
 
-def test_import_discovery_by_label_success(cloud_provider, monkeypatch, tmp_path):
-    """
-    'apim import --label key=val' should find the project and sync.
-    """
-    project_id = "ai-gateway-project"
-    cloud_provider.project_labels[project_id] = {"app": "ai-gateway"}
-    cloud_provider.orgs[project_id] = {"name": project_id}
-    
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0)
-        runner = CliRunner()
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+@pytest.fixture
+def mock_import_deps():
+    with patch("scripts.cli.commands.import.TerraformStager") as stager, \
+         patch("scripts.cli.commands.import._run_bootstrap_folder") as boot, \
+         patch("subprocess.run") as sub:
         
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["import", "--label", "app=ai-gateway"])
-            
-            assert result.exit_code == 0
-            assert f"Discovering project with label app=ai-gateway..." in result.output
-            assert Path("apigee.tfvars").exists()
-            assert f'gcp_project_id = "{project_id}"' in Path("apigee.tfvars").read_text()
+        # Defaults for Success
+        stager.return_value.resolve_template_path.side_effect = lambda x: Path(x).absolute()
+        stager.return_value.stage_phase.return_value = Path("staged/1-main")
+        boot.return_value = "sa@example.com"
+        sub.return_value.returncode = 0
+        
+        yield stager, boot, sub
 
-def test_import_fails_on_exclusive_args_violation(tmp_path):
-    """
-    Specifying both --project and --label should be an error.
-    """
+# --- Positive Scenarios ---
+
+def test_import_success(mock_import_deps, tmp_path):
+    """Positive: Successful import flow."""
+    stager, boot, sub = mock_import_deps
     runner = CliRunner()
-    result = runner.invoke(cli, ["import", "--project", "p1", "--label", "k=v"])
-    assert result.exit_code != 0
-    assert "are mutually exclusive" in result.output
-
-def test_import_fails_on_conflict_without_force(monkeypatch, tmp_path):
-    """
-    Importing a different project into an already-configured dir should fail without --force.
-    """
-    runner = CliRunner()
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     
     with runner.isolated_filesystem(temp_dir=tmp_path):
-        # Dir already has project p1
-        Path("apigee.tfvars").write_text('gcp_project_id = "p1"\n')
+        Path("t.json").write_text(json.dumps(VALID_TEMPLATE))
         
-        # Try to import p2
-        result = runner.invoke(cli, ["import", "--project", "p2"])
+        result = runner.invoke(cli, ["import", "proj-x", "t.json"])
         
-        assert result.exit_code != 0
-        assert "Already attached to 'p1'" in result.output
-        assert 'gcp_project_id = "p1"' in Path("apigee.tfvars").read_text()
+        assert result.exit_code == 0
+        assert "Import Successful" in result.output
+        assert Path("terraform.tfvars").exists()
+        
+        # Verify Bootstrap called
+        boot.assert_called_once()
+        
+        # Verify Import Command
+        args, _ = sub.call_args
+        assert "import" in args[0]
+        assert "organizations/proj-x" in args[0]
 
-def test_import_atomicity_on_cloud_failure(cloud_provider, monkeypatch, tmp_path):
-    """
-    If the cloud probe fails (org not found), no local config should be written.
-    """
-    project_id = "missing-project"
-    # Org is NOT in cloud_provider.orgs
+# --- Negative Scenarios ---
+
+def test_import_fails_existing_config(mock_import_deps, tmp_path):
+    """Negative: Fails if config exists."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        Path("terraform.tfvars").write_text("exists")
+        result = runner.invoke(cli, ["import", "p", "t"])
+        assert result.exit_code != 0
+        assert "already exists" in result.output
+
+def test_import_fails_bootstrap(mock_import_deps, tmp_path):
+    """Negative: Fails if bootstrap identity returns None/False."""
+    stager, boot, sub = mock_import_deps
+    boot.return_value = None # Bootstrap failed/cancelled
     
     runner = CliRunner()
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    
     with runner.isolated_filesystem(temp_dir=tmp_path):
-        result = runner.invoke(cli, ["import", "--project", project_id])
+        Path("t.json").write_text(json.dumps(VALID_TEMPLATE))
         
-        assert result.exit_code != 0
-        assert "Apigee Org not found" in result.output
-        assert not Path("apigee.tfvars").exists()
+        result = runner.invoke(cli, ["import", "p", "t.json"])
+        assert result.exit_code == 1
+        # import subprocess should NOT be called
+        sub.assert_not_called()
+
+def test_import_fails_terraform_error(mock_import_deps, tmp_path):
+    """Negative: Fails if terraform import command errors."""
+    stager, boot, sub = mock_import_deps
+    sub.return_value.returncode = 1 # Import command failed
+    
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        Path("t.json").write_text(json.dumps(VALID_TEMPLATE))
+        
+        result = runner.invoke(cli, ["import", "p", "t.json"])
+        assert result.exit_code == 1
+        assert "Import Failed" in result.output

@@ -25,7 +25,18 @@ def api_request(method, path, body=None, headers=None):
     # Determine Base URL
     base_url = "https://apigee.googleapis.com/v1"
     vars_dict = load_vars()
-    cp_loc = vars_dict.get("control_plane_location")
+    
+    # Handle nested 'apigee' block from HCL parsing
+    apigee_conf = vars_dict.get("apigee", {})
+    if isinstance(apigee_conf, list) and len(apigee_conf) > 0:
+        apigee_conf = apigee_conf[0]
+        
+    cp_loc = apigee_conf.get("control_plane_location")
+    
+    # Also check if it's at the top level (legacy/flat config)
+    if not cp_loc:
+        cp_loc = vars_dict.get("control_plane_location")
+
     if cp_loc and not path.startswith("http"):
         base_url = f"https://{cp_loc}-apigee.googleapis.com/v1"
 
