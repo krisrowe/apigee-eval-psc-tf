@@ -3,7 +3,7 @@ from pathlib import Path
 from rich.console import Console
 from scripts.cli.config import ConfigLoader
 from scripts.cli.engine import TerraformStager
-from scripts.cli.schemas import ApigeeOrgTemplate, SchemaValidationError
+from scripts.cli.schemas import ApigeeOrgConfig, SchemaValidationError
 from scripts.cli.commands.core import run_terraform
 
 console = Console()
@@ -38,7 +38,7 @@ def create(ctx, project_id, template_name, force):
         template_path = stager.resolve_template_path(template_name)
         
         console.print(f"[dim]Validating template: {template_path}...[/dim]")
-        schema = ApigeeOrgTemplate.from_json_file(str(template_path))
+        schema = ApigeeOrgConfig.from_json_file(str(template_path))
         console.print("[green]✓ Template Verified[/green]")
         
     except FileNotFoundError as e:
