@@ -40,10 +40,15 @@ class Config:
 
 class ConfigLoader:
     # Supported config filenames in order of preference
-    CONFIG_FILES = ["terraform.tfvars", "apigee.tfvars"]
+    CONFIG_FILES = ["terraform.tfvars"]
 
     @classmethod
     def load(cls, working_dir: Path, optional: bool = False) -> Config:
+        # Enforce policy: apigee.tfvars is forbidden
+        legacy_file = working_dir / "apigee.tfvars"
+        if legacy_file.exists():
+             raise ValueError(f"Forbidden configuration file found: {legacy_file.name}. Please rename to 'terraform.tfvars' and ensure it contains standard HCL (e.g., gcp_project_id = \"...\").")
+
         hcl_path = None
         for filename in cls.CONFIG_FILES:
             candidate = working_dir / filename
@@ -59,7 +64,7 @@ class ConfigLoader:
             except Exception as e:
                 raise ValueError(f"Failed to parse {hcl_path.name}: {e}")
         elif not optional:
-            raise FileNotFoundError(f"Configuration file not found. Expected one of: {', '.join(cls.CONFIG_FILES)}")
+            raise FileNotFoundError(f"Configuration file not found. Expected: {', '.join(cls.CONFIG_FILES)}")
 
         # Use the centralized ConfigManager for global settings
         sdk_config = get_config_manager().load()

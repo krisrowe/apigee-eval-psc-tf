@@ -1,20 +1,18 @@
 import click
 from pathlib import Path
-from dataclasses import asdict
 from rich.console import Console
 from rich.table import Table
 from scripts.cli.config import ConfigLoader
-from scripts.cli.engine import TerraformStager
-from scripts.cli.schemas import ApigeeOrgTemplate
+from scripts.cli.commands.core import run_terraform
 from scripts.cli.cloud.factory import get_cloud_provider
 
 console = Console()
 
 @click.command(name="status")
-@click.option("--template", help="Optional template to compare against environment.")
+@click.option("--refresh", is_flag=True, help="Run 'terraform refresh' before showing status.")
 @click.pass_context
-def status_cmd(ctx, template):
-    """Check cloud environment status and optional template compliance."""
+def status_cmd(ctx, refresh):
+    """Check environment status using Terraform state."""
     try:
         config = ConfigLoader.load(Path.cwd(), optional=True)
         project_id = config.project.gcp_project_id
@@ -25,87 +23,47 @@ def status_cmd(ctx, template):
         console.print("[red]Error: No project ID found. Run 'apim create' or 'apim import' first.[/red]")
         ctx.exit(1)
 
+    if refresh:
+        console.print(f"[dim]Refreshing state for {project_id}...[/dim]")
+        exit_code = run_terraform(config, "refresh")
+        if exit_code != 0:
+            console.print("[yellow]Warning: Refresh failed. Showing cached state.[/yellow]")
+
+    provider = get_cloud_provider()
+    status = provider.get_status(project_id)
+    
+    if not status:
+        console.print(f"[red]Error: Could not retrieve status for {project_id}. (State missing?)[/red]")
+        ctx.exit(1)
+
     console.print(f"\n[bold underline]ENVIRONMENT STATUS: {project_id}[/bold underline]")
-    try:
-        provider = get_cloud_provider()
+    
+    # 1. Config Summary (Immutable)
+    table = Table(show_header=False, box=None)
+    table.add_row("[bold]Billing:[/bold]", status.config.billing_type)
+    table.add_row("[bold]Sub Type:[/bold]", status.subscription_type)
+    table.add_row("[bold]DRZ:[/bold]", "Yes" if status.is_drz else "No")
+    
+    if status.is_drz:
+        table.add_row("[bold]Control Plane:[/bold]", status.config.control_plane_location)
+        table.add_row("[bold]Consumer Region:[/bold]", status.config.consumer_data_region)
+    else:
+        table.add_row("[bold]Analytics Region:[/bold]", status.config.analytics_region)
         
-        actual_state = {}
-        
-        # 1. Probe Organization
-        org = provider.get_org(project_id)
-        if org:
-            actual_state["org"] = "exists"
-            console.print(f"  [green]✓ Apigee Organization found.[/green]")
-        else:
-            actual_state["org"] = "missing"
-            console.print(f"  [red]✗ Apigee Organization not found.[/red]")
+    table.add_row("[bold]Runtime Region:[/bold]", status.config.runtime_location)
+    console.print(table)
 
-        # 2. Probe Instances
-        instances = provider.list_instances(project_id)
-        actual_state["instances"] = [i['name'] for i in instances]
-        if instances:
-            console.print(f"  [green]✓ {len(instances)} Instance(s) found:[/green] [dim]{', '.join(actual_state['instances'])}[/dim]")
-        else:
-            console.print(f"  [yellow]! No Instances found.[/yellow]")
+    # 2. Operational State
+    console.print("\n[bold]OPERATIONAL STATE:[/bold]")
+    if status.environments:
+        console.print(f"  [green]✓ Environments:[/green] [dim]{', '.join(status.environments)}[/dim]")
+    else:
+        console.print(f"  [yellow]! No Environments found.[/yellow]")
 
-        # 3. Probe Environments
-        envs = provider.get_environments(project_id)
-        actual_state["environments"] = envs
-        if envs:
-            console.print(f"  [green]✓ {len(envs)} Environment(s) found:[/green] [dim]{', '.join(envs)}[/dim]")
-        else:
-            console.print(f"  [yellow]! No Environments found.[/yellow]")
+    if status.instances:
+        console.print(f"  [green]✓ Instances:[/green] [dim]{', '.join(status.instances)}[/dim]")
+    else:
+        console.print(f"  [yellow]! No Instances found.[/yellow]")
 
-        # 4. Networking (if applicable)
-        domain = config.network.domain
-        if domain:
-            ssl = provider.get_ssl_certificate_status(project_id, domain)
-            status = ssl.get("status", "UNKNOWN")
-            actual_state["domain_name"] = domain
-            actual_state["ssl_status"] = status
-            console.print(f"  [green]✓ Domain Configed:[/green] {domain} [dim](SSL: {status})[/dim]")
-
-        # 5. Template Compliance Check
-        if template:
-            try:
-                stager = TerraformStager(config)
-                template_path = stager.resolve_template_path(template)
-                tmpl = ApigeeOrgTemplate.from_json_file(str(template_path))
-                tmpl_data = asdict(tmpl)
-                
-                console.print(f"\n[bold underline]TEMPLATE COMPLIANCE: {template_path.name}[/bold underline]")
-                
-                # Mapping: Template Field -> Config Attribute
-                # Note: Config object is nested (config.apigee.billing_type, config.project.region)
-                # We need a helper to get actual values
-                
-                for key, expected in tmpl_data.items():
-                    if expected is None: continue
-                    if key == "drz": continue
-                    
-                    actual = None
-                    if key == "billing_type":
-                        actual = config.apigee.billing_type
-                    elif key == "runtime_location":
-                        actual = config.project.region # Mapped in ConfigLoader
-                    elif key == "analytics_region":
-                        actual = config.apigee.analytics_region
-                    elif key == "control_plane_location":
-                        actual = config.apigee.control_plane_location
-                    elif key == "consumer_data_region":
-                        actual = config.apigee.consumer_data_region
-                    elif key == "instance_name":
-                        actual = config.apigee.instance_name
-                        
-                    if actual == expected:
-                         console.print(f"  [green]✓ {key}:[/green] {actual} (Match)")
-                    else:
-                         console.print(f"  [red]✗ {key}:[/red] {actual or '[missing]'} (Expected: {expected})")
-                        
-            except Exception as e:
-                console.print(f"[red]Error performing compliance check:[/red] {e}")
-
-    except Exception as e:
-        console.print(f"[red]Error probing cloud:[/red] {e}")
-
+    console.print(f"  [green]✓ SSL Status:[/green] {status.ssl_status}")
     console.print("")

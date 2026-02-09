@@ -24,6 +24,19 @@ This repository uses a **Project-ID Centric** state management model:
 - The primary filename is the `gcp_project_id`.
 - **Isolating Segments**: If a single GCP project hosts multiple independent Apigee deployments (e.g., `sandbox` and `roles`), use the `state_suffix` variable to prevent state collisions.
 
+## Configuration Guidelines
+
+### Strict File Policy
+To maintain consistency and avoid confusion with Terraform conventions:
+*   **Allowed:** `terraform.tfvars`
+*   **Forbidden:** `apigee.tfvars` (Support is removed)
+*   **Content:** Keep configuration minimal. Rely on defaults in `variables.tf` or Template JSONs where possible.
+    *   **Required:** `gcp_project_id`
+    *   **Optional:** `apigee_runtime_location`, `apigee_billing_type`, etc.
+
+### Config Loading Logic
+The CLI `ConfigLoader` reads `terraform.tfvars`, validates the project ID, and passes it to the engine. The engine then synthesizes the full Terraform configuration (backend, providers, variables) in the staging directory.
+
 ## Development Workflow
 
 ### Testing (TDD)

@@ -104,10 +104,13 @@ class TerraformStager:
         # 3. GENERATE BACKEND (unique state file per phase)
         self._generate_backend(phase_name, phase_staging)
         
-        # 4. COPY USER FILES (overlay)
+        # 4. GENERATE TFVARS (Bridge Config Object -> Flat TF Vars)
+        self._generate_tfvars(phase_staging)
+        
+        # 5. COPY USER FILES (overlay)
         self._copy_user_files(phase_staging)
         
-        # 5. INJECT EXPLICT CONFIGS (--config)
+        # 6. INJECT EXPLICT CONFIGS (--config)
         if config_files:
             self._inject_configs(phase_staging, config_files)
 
@@ -142,6 +145,28 @@ terraform {{
 '''
         (target_dir / "backend.tf").write_text(backend_config)
 
+    def _generate_tfvars(self, target_dir: Path):
+        """Generates auto.tfvars.json in target_dir."""
+        import json
+        tfvars_content = {
+            "gcp_project_id": self.config.project.gcp_project_id,
+            "apigee_runtime_location": self.config.project.region,
+            "apigee_analytics_region": self.config.apigee.analytics_region,
+            "domain_name": self.config.network.domain,
+            "default_root_domain": self.config.network.default_root_domain,
+            "control_plane_location": self.config.apigee.control_plane_location,
+            "billing_type": self.config.apigee.billing_type, 
+            "apigee_billing_type": self.config.apigee.billing_type,
+            "apigee_instance_name": self.config.apigee.instance_name,
+        }
+        
+        if self.config.apigee.consumer_data_region:
+            tfvars_content["consumer_data_region"] = self.config.apigee.consumer_data_region
+        
+        tfvars_path = target_dir / "_apim_gen.auto.tfvars.json"
+        with open(tfvars_path, "w") as f:
+            json.dump(tfvars_content, f, indent=2)
+
     def _inject_configs(self, target_dir: Path, config_files: list[str]):
         """Resolves and copies explicit config files."""
         for i, path_str in enumerate(config_files):
@@ -158,12 +183,17 @@ terraform {{
     def _copy_user_files(self, target_dir: Path):
         """
         Copies user's overlay *.tf and *.tfvars files to target_dir.
+        STRICT POLICY: Only standard Terraform variables files are copied.
+        apigee.tfvars is explicitly excluded/ignored.
         """
         reserved_prefixes = ["_apim_"]
         phase_name = target_dir.name
         
         # 1. Copy Config Files (*.tfvars) - Shared across all phases
-        for pattern in ["*.tfvars", "*.tfvars.json"]:
+        # Explicit allowlist of standard Terraform var files
+        allowed_vars = ["terraform.tfvars", "*.auto.tfvars", "*.auto.tfvars.json"]
+        
+        for pattern in allowed_vars:
              for source_file in self.project_root.glob(pattern):
                 shutil.copy2(source_file, target_dir / source_file.name)
 

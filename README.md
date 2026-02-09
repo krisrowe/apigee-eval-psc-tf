@@ -36,6 +36,20 @@ make install
 
 ---
 
+## Configuration
+
+**Strict Policy:**
+*   **Filename:** `terraform.tfvars` (ONLY). `apigee.tfvars` is **forbidden**.
+*   **Content:** Minimal. Primarily `gcp_project_id`.
+*   **Location:** In your project's working directory (e.g. `~/ws/my-client/my-project/`). **NEVER** inside the `apigee-tf` repository itself.
+
+**Example `terraform.tfvars`:**
+```hcl
+gcp_project_id = "my-project-id"
+# Optional overrides only if defaults (us-central1) don't apply
+# apigee_runtime_location = "us-east1"
+```
+
 ## Workflows
 
 ### 1. New Project (Greenfield)

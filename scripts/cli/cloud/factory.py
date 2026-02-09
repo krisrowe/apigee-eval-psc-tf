@@ -7,8 +7,8 @@ def get_cloud_provider() -> CloudProvider:
     """Get the current cloud provider."""
     global _provider
     if _provider is None:
-        from .apigee_api import ApigeeAPIProvider
-        _provider = ApigeeAPIProvider()
+        from .terraform import TerraformCloudProvider
+        _provider = TerraformCloudProvider()
     return _provider
 
 def set_cloud_provider(provider: Optional[CloudProvider]) -> None:

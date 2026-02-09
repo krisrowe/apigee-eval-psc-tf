@@ -1,15 +1,15 @@
 import json
-from dataclasses import dataclass, fields
-from typing import Optional
+from dataclasses import dataclass, fields, field
+from typing import Optional, List
 
 class SchemaValidationError(Exception):
     pass
 
 @dataclass
-class ApigeeOrgTemplate:
+class ApigeeOrgConfig:
     """
-    Strict Schema for 'apim create' input JSON Template.
-    All fields correspond to specific terraform variables.
+    Core Apigee Configuration (Immutable-ish properties).
+    Used for templates ('apim create') and status reporting.
     """
     # Core
     billing_type: str = "EVALUATION"
@@ -51,7 +51,7 @@ class ApigeeOrgTemplate:
             raise SchemaValidationError("Configuration Error: 'runtime_location' is required.")
 
     @classmethod
-    def from_json_file(cls, path: str) -> 'ApigeeOrgTemplate':
+    def from_json_file(cls, path: str) -> 'ApigeeOrgConfig':
         with open(path, 'r') as f:
             data = json.load(f)
         
@@ -96,3 +96,26 @@ class ApigeeOrgTemplate:
             lines.append(f'consumer_data_region = "{self.consumer_data_region}"')
 
         return "\n".join(lines) + "\n"
+
+# Alias for backward compatibility if needed, though we should update usages
+ApigeeOrgTemplate = ApigeeOrgConfig
+
+@dataclass
+class ApigeeProjectStatus:
+    """
+    Operational Status View.
+    Contains the immutable config plus live operational state.
+    """
+    project_id: str
+    config: ApigeeOrgConfig
+    
+    # Operational State
+    subscription_type: str = "-"  # From API (PAID/TRIAL) - distinct from billing_type config
+    environments: List[str] = field(default_factory=list)
+    instances: List[str] = field(default_factory=list)
+    ssl_status: str = "-"
+    
+    @property
+    def is_drz(self) -> bool:
+        return self.config.drz
+
