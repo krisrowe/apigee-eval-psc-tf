@@ -17,16 +17,29 @@ class TerraformCloudProvider(CloudProvider):
         """
         Syncs state and returns comprehensive status.
         """
-        # Note: In this implementation, we assume we are running within a command 
-        # that has already initialized/staged the environment or we use global state logic.
+        # Resolve state path for the given project_id
+        # TODO: Get Data Dir from env/config properly (duplication)
+        import os
+        from pathlib import Path
         
-        # 1. Load current state
-        state = load_tfstate()
-        if not state:
+        data_home = os.environ.get("APIGEE_TF_DATA_DIR")
+        if data_home:
+            root = Path(data_home)
+        else:
+            root = Path.home() / ".local/share/apigee-tf"
+            
+        # Check 1-main state
+        state_file = root / project_id / "tf" / "1-main" / "terraform.tfstate"
+        
+        if not state_file.exists():
             return None
             
-        # 2. Map to Pydantic
-        return map_state_to_status(state)
+        try:
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+            return map_state_to_status(state)
+        except json.JSONDecodeError:
+            return None
 
     def get_project_id_by_label(self, label_key: str, label_value: str) -> Optional[str]:
         """Discovery still uses gcloud since Terraform doesn't do ad-hoc discovery well."""

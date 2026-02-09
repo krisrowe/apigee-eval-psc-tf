@@ -93,3 +93,17 @@ pytest tests/integration -s
 
 > [!WARNING]
 > Integration tests invoke real Terraform commands (`apply`, `import`) which **will modify infrastructure** and **incur costs**. Ensure you are using non-production sandbox projects.
+
+## Architecture & Performance Note
+
+### Ephemeral Staging
+As of the "Centralized Status & Coarse-Grained Provider" refactor:
+*   **Staging:** `~/.cache/apigee-tf/` (Ephemeral - wiped on every run)
+*   **State:** `~/.local/share/apigee-tf/states/` (Persistent)
+
+**Trade-off:**
+*   **Correctness (Gain):** Wiping the staging directory ensures no stale symlinks or artifacts (like `.terraform/`) corrupt the run. It guarantees that `apim plan` reflects exactly the current code/config.
+*   **Performance (Loss):** `terraform init` re-downloads provider plugins on every execution (~15-30s overhead).
+
+**Future Optimization:**
+To restore performance without sacrificing correctness, we can implement a Global Plugin Cache by setting `TF_PLUGIN_CACHE_DIR` in the CLI engine. This is a known optimization path if build times become an issue.

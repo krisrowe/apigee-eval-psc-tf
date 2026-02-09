@@ -24,7 +24,7 @@ def clean():
 import importlib
 
 # Register Core Commands
-from scripts.cli.commands.core import plan
+from scripts.cli.commands.core import plan, apply
 from scripts.cli.commands.create import create
 from scripts.cli.commands.update import update
 
@@ -47,6 +47,7 @@ cli.add_command(create)
 cli.add_command(update)
 cli.add_command(import_cmd, name="import")
 cli.add_command(plan)
+cli.add_command(apply)
 cli.add_command(show_cmd, name="show")
 cli.add_command(status_cmd, name="status")
 cli.add_command(list_cmd, name="list")

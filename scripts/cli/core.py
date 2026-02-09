@@ -144,14 +144,30 @@ def load_vars():
         return {}
 
 def load_tfstate():
-    """Load terraform state for the local project."""
-    _, state_file = get_project_paths()
+    """Load terraform state for the local project (Phase 1-main)."""
+    # Assuming XDG_DATA_HOME/apigee-tf/<project_id>/tf/1-main/terraform.tfstate
+    
+    # 1. Get Project ID
+    vars_dict = load_vars()
+    project_id = vars_dict.get("gcp_project_id")
+    if not project_id:
+        return None
+        
+    # 2. Resolve Path
+    data_home = os.environ.get("APIGEE_TF_DATA_DIR")
+    if data_home:
+        root = Path(data_home)
+    else:
+        root = Path.home() / ".local/share/apigee-tf"
+        
+    # TODO: Support state_suffix if we expose it in load_vars/config
+    state_file = root / project_id / "tf" / "1-main" / "terraform.tfstate"
+    
     if state_file.exists():
         try:
             with open(state_file, 'r') as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            # Empty or invalid state file -> treat as not applied
             return None
     return None
 

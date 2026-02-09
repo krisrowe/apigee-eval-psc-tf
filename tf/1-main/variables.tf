@@ -88,3 +88,10 @@ variable "fake_secret" {
   type        = bool
   default     = false
 }
+
+# Legacy/Shared variable compatibility
+variable "billing_type" {
+  description = "Alias for apigee_billing_type (consumed by CLI engine compatibility)."
+  type        = string
+  default     = null
+}

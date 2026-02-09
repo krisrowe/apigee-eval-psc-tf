@@ -6,7 +6,7 @@ from rich.table import Table
 from scripts.cli.mappers import map_state_to_status
 
 console = Console()
-STATE_ROOT = Path.home() / ".local" / "share" / "apigee-tf" / "states"
+STATE_ROOT = Path.home() / ".local" / "share" / "apigee-tf"
 
 @click.command(name="list")
 def list_cmd():
@@ -16,21 +16,25 @@ def list_cmd():
         return
 
     projects = []
-    # Collect data
-    for state_file in STATE_ROOT.glob("*.tfstate"):
-        if state_file.name.endswith("-0-bootstrap.tfstate"):
-            continue 
-        
-        try:
-            with open(state_file, 'r') as f:
-                state = json.load(f)
+    # Iterate over project directories
+    for project_dir in STATE_ROOT.iterdir():
+        if not project_dir.is_dir():
+            continue
             
-            status = map_state_to_status(state)
-            projects.append(status)
+        # Check for 1-main state (primary status source)
+        state_file = project_dir / "tf" / "1-main" / "terraform.tfstate"
+        
+        if state_file.exists():
+            try:
+                with open(state_file, 'r') as f:
+                    state = json.load(f)
+                
+                status = map_state_to_status(state)
+                projects.append(status)
 
-        except Exception as e:
-            # Skip corrupted files
-            pass
+            except Exception:
+                # Skip corrupted files
+                pass
 
     if not projects:
         console.print("[yellow]No tracked projects found.[/yellow]")

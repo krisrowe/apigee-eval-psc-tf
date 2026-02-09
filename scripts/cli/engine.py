@@ -19,6 +19,17 @@ def get_data_dir() -> Path:
         return Path(data_home)
     return Path.home() / ".local/share/apigee-tf"
 
+def get_cache_dir() -> Path:
+    """
+    Returns the cache directory for ephemeral staging.
+    Default: ~/.cache/apigee-tf
+    Override: XDG_CACHE_HOME
+    """
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache:
+        return Path(xdg_cache) / "apigee-tf"
+    return Path.home() / ".cache" / "apigee-tf"
+
 class TerraformStager:
     def __init__(self, config: Config):
         self.config = config
@@ -26,8 +37,9 @@ class TerraformStager:
         # Package root is 3 levels up from scripts/cli/engine.py
         self.package_root = Path(__file__).parent.parent.parent.resolve()
         
-        # Staging Directory: <DATA_DIR>/<project_id>[/<suffix>]
-        self.staging_dir = get_data_dir() / config.project.gcp_project_id
+        # Staging Directory: <CACHE_DIR>/<project_id>[/<suffix>]
+        # Ephemeral: Can be wiped at any time.
+        self.staging_dir = get_cache_dir() / config.project.gcp_project_id
         if config.apigee.state_suffix:
             self.staging_dir = self.staging_dir / config.apigee.state_suffix
 
@@ -88,8 +100,10 @@ class TerraformStager:
         """
         Stages a specific phase folder (e.g. '0-bootstrap', '1-main').
         Returns path to the staged directory for that phase.
+        We stage into 'tf/<phase_name>' to preserve relative paths if needed, 
+        but modules are now copied directly inside.
         """
-        phase_staging = self.staging_dir / phase_name
+        phase_staging = self.staging_dir / "tf" / phase_name
         console.print(f"[dim]Staging {phase_name} in {phase_staging}...[/dim]")
         
         if not phase_staging.exists():
@@ -101,16 +115,19 @@ class TerraformStager:
         # 2. COPY PACKAGE TF (from tf/<phase_name>)
         self._copy_phase_tf(phase_name, phase_staging)
         
-        # 3. GENERATE BACKEND (unique state file per phase)
+        # 3. COPY SHARED MODULES (to phase_staging/modules)
+        self._copy_shared_modules(phase_staging)
+        
+        # 4. GENERATE BACKEND (unique state file per phase)
         self._generate_backend(phase_name, phase_staging)
         
-        # 4. GENERATE TFVARS (Bridge Config Object -> Flat TF Vars)
+        # 5. GENERATE TFVARS (Bridge Config Object -> Flat TF Vars)
         self._generate_tfvars(phase_staging)
         
-        # 5. COPY USER FILES (overlay)
+        # 6. COPY USER FILES (overlay)
         self._copy_user_files(phase_staging)
         
-        # 6. INJECT EXPLICT CONFIGS (--config)
+        # 7. INJECT EXPLICT CONFIGS (--config)
         if config_files:
             self._inject_configs(phase_staging, config_files)
 
@@ -130,10 +147,25 @@ class TerraformStager:
              
         shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
 
+    def _copy_shared_modules(self, target_dir: Path):
+        """Copies shared modules into the phase directory (./modules)."""
+        src_modules = self.package_root / "modules"
+        dest_modules = target_dir / "modules"
+        
+        if src_modules.exists():
+            if dest_modules.exists():
+                shutil.rmtree(dest_modules)
+            shutil.copytree(src_modules, dest_modules)
+
     def _generate_backend(self, phase_name: str, target_dir: Path):
         """Generates a local backend configuration."""
-        # State file location: ~/.local/share/apigee-tf/<project>/states/<phase>/terraform.tfstate
-        state_path = self.staging_dir / "states" / phase_name / "terraform.tfstate"
+        # State file location: <DATA_DIR>/<project_id>[/<suffix>]/tf/<phase>/terraform.tfstate
+        # Persistent storage (XDG_DATA_HOME)
+        state_root = get_data_dir() / self.config.project.gcp_project_id
+        if self.config.apigee.state_suffix:
+            state_root = state_root / self.config.apigee.state_suffix
+            
+        state_path = state_root / "tf" / phase_name / "terraform.tfstate"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         
         backend_config = f'''
