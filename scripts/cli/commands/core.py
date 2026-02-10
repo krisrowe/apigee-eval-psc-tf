@@ -230,14 +230,14 @@ def plan(ctx):
 
 @click.command()
 @click.argument("template_name", required=False)
-@click.option("--auto-approve", is_flag=True, help="Skip interactive approval.")
+@click.option("--interactive", is_flag=True, help="Enable interactive approval (dangerous in CI). Default is auto-approve.")
 @click.option("--fake-secret", is_flag=True, help="Create/maintain the test secret.")
 @click.option("--deletes-allowed", is_flag=True, help="Remove deny policy (allow_deletes=true).")
 @click.option("--skip-impersonation", is_flag=True, help="Use ADC directly (don't impersonate SA).")
 @click.option("--skip-apigee", is_flag=True, help="Skip Apigee resource creation (Networking/IAM only).")
 @click.option("--bootstrap-only", is_flag=True, help="Stop after IAM bootstrap (Fast Test mode).")
 @click.pass_context
-def apply(ctx, template_name, auto_approve, fake_secret, deletes_allowed, skip_impersonation, skip_apigee, bootstrap_only):
+def apply(ctx, template_name, interactive, fake_secret, deletes_allowed, skip_impersonation, skip_apigee, bootstrap_only):
     """Converge: Reconciles cloud state with configuration."""
     try:
         root_dir = ConfigLoader.find_root()
@@ -271,7 +271,8 @@ def apply(ctx, template_name, auto_approve, fake_secret, deletes_allowed, skip_i
         
         exit_code = run_terraform(
             config, "apply", vars_to_inject=vars_to_inject,
-            auto_approve=auto_approve, fake_secret=fake_secret,
+            auto_approve=not interactive, # Default is True (Non-interactive)
+            fake_secret=fake_secret,
             deletes_allowed=deletes_allowed, skip_impersonation=skip_impersonation,
             bootstrap_only=bootstrap_only
         )

@@ -45,7 +45,7 @@ def test_apply_with_template_no_state_empty_cloud_mocked_org(ephemeral_project, 
     with patch("scripts.cli.commands.core.subprocess.run", side_effect=side_effect):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             (Path(tmp_path) / "terraform.tfvars").write_text(f'gcp_project_id = "{ephemeral_project}"')
-            result = runner.invoke(cli, ["apply", "us-central1", "--auto-approve"])
+            result = runner.invoke(cli, ["apply", "us-central1"])
             
             assert result.exit_code == 0
             assert "✓ System Converged" in result.output
@@ -74,7 +74,7 @@ def test_apply_with_template_no_state_partial_cloud_mock_collision(ephemeral_pro
     with patch("scripts.cli.commands.core.subprocess.run", side_effect=side_effect):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             (Path(tmp_path) / "terraform.tfvars").write_text(f'gcp_project_id = "{ephemeral_project}"')
-            result = runner.invoke(cli, ["apply", "us-central1", "--auto-approve"])
+            result = runner.invoke(cli, ["apply", "us-central1"])
             
             assert result.exit_code != 0
             assert "already exists" in result.output
@@ -91,12 +91,13 @@ def test_apply_with_template_no_state_empty_cloud_skip_apigee(ephemeral_project,
         (Path(tmp_path) / "terraform.tfvars").write_text(f'gcp_project_id = "{ephemeral_project}"')
         
         # This runs FOR REAL but skips the expensive bits via CLI flag
-        result = runner.invoke(cli, ["apply", "us-central1", "--auto-approve", "--skip-apigee"])
+        result = runner.invoke(cli, ["apply", "us-central1", "--skip-apigee"])
         
         if result.exit_code != 0:
             print(result.output)
             
         assert result.exit_code == 0
+        assert "✓ Bootstrap complete" in result.output
         assert "✓ System Converged" in result.output
 
 @pytest.mark.integration
@@ -111,6 +112,6 @@ def test_apply_with_template_no_state_existing_cloud_org(existing_org_project_id
         p.write_text(json.dumps(template))
         (Path(tmp_path) / "terraform.tfvars").write_text(f'gcp_project_id = "{existing_org_project_id}"')
         
-        result = runner.invoke(cli, ["apply", str(p), "--auto-approve"])
+        result = runner.invoke(cli, ["apply", str(p)])
         assert result.exit_code != 0
         assert "already exists" in result.output
