@@ -7,7 +7,7 @@ This repository provides a production-grade Terraform framework for deploying Ap
 ```bash
 make install
 ```
-This installs the `apim` CLI tool to your system path.
+This installs the `apim` CLI tool to your system path. After installation, simply run `apim` to see available commands and options.
 
 ---
 
@@ -50,11 +50,12 @@ Before using `apim`, ensure you have a Google Cloud Project with billing enabled
 You have a fresh GCP project and want to deploy Apigee.
 
 1.  **Configure Project:**
-    Set the active project context for the local directory:
+    Navigate to the directory where you want to maintain your project configuration and set the active context:
     ```bash
+    cd ~/my-apigee-workspace
     apim project set my-project-id
     ```
-    *(This creates/updates `terraform.tfvars` automatically)*
+    *(This creates/updates `terraform.tfvars` in the current directory automatically)*
 
 2.  **Define Template:** Create a `template.json` to define your desired Apigee state.
     ```json
@@ -76,8 +77,10 @@ You have a fresh GCP project and want to deploy Apigee.
 ### 🟡 Scenario 2: Existing Project (Adoption)
 You have an existing Apigee installation and want to manage it with this tool.
 
-1.  **Hydrate State:** Run `import` to discover and adopt existing resources.
+1.  **Hydrate State:**
+    Navigate to your project directory and run `import` to discover existing resources:
     ```bash
+    cd ~/existing-project-dir
     apim import my-project-id
     ```
     *   *Note:* Use `--control-plane=ca` (or eu, au) for regional Data Residency projects.
