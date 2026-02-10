@@ -76,7 +76,7 @@ def _ensure_meta_apis(project_id: str):
         # ServiceUsage stabilization
         time.sleep(5)
 
-def _wait_for_impersonation(sa_email: str, project_id: str):
+def wait_for_impersonation(sa_email: str, project_id: str):
     """Polls until impersonation access is verified."""
     start = time.time()
     # Increased timeout to 120s for slow environments (Argolis)
@@ -176,7 +176,7 @@ def run_terraform(
     
     if sa_email:
         if changes_made:
-            _wait_for_impersonation(sa_email, config.project.gcp_project_id)
+            wait_for_impersonation(sa_email, config.project.gcp_project_id)
         elif not is_debug():
             console.print("[dim]Handoff verified (cached).[/dim]")
 
