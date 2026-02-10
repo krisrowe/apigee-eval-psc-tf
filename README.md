@@ -138,7 +138,9 @@ For regions requiring Data Residency (e.g. Canada, Europe), use a specific templ
 | **1b**| 🚀 | ✅ | ⭕ | ⭕ | "System Converged" | 🟢 | `test_apply_..._skip_apigee` | ✅ | 🆗 Verified |
 | **2** | 🚀 | ✅ | ⭕ | 🟡 | "System Converged" | 🟢 | `test_apply_..._bootstrap_only` | ✅ | 🆗 Verified |
 | **3** | 🚀 | ✅ | ⭕ | 🟡 | Error: 409 (Collision) | 🔵 | `test_apply_..._mock_collision` | ✅ | 🆗 Verified |
+| **4** | 🚀 | ✅ | ⭕ | 🟢 | Error: 409 (Collision) | 🟢 | `test_apply_..._existing_cloud_org` | ✅ | 🆗 Verified |
 | **12**| 🚀 | ❌ | 🟢 | 🟢 | "System Converged" | 🟢 | `test_deny_deletes_enforcement` | ✅ | 🆗 Verified |
+| **13**| 🔍 | ❌ | ⭕ | ⭕ | Error: "Not found" | 🟢 | `test_import_no_org_negative` | ✅ | 🆗 Verified |
 | **14**| 🔍 | ❌ | ⭕ | 🟢 | "State Hydrated Successful" | 🟢 | `test_import_..._discovery` | ✅ | 🆗 Verified |
 | **15**| 🔍🚀| ✅ | ⭕ | 🟡 | "System Converged" | 🟢 | `test_import_apply_..._fill_blanks` | ✅ | 🆗 Verified |
 
