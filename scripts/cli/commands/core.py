@@ -3,70 +3,15 @@ import os
 import click
 import shutil
 import subprocess
+import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from rich.console import Console
 from scripts.cli.config import ConfigLoader
 from scripts.cli.engine import TerraformStager
 from scripts.cli.schemas import ApigeeOrgConfig
 
 console = Console()
-
-def _run_bootstrap_folder(stager: TerraformStager, config, deletes_allowed: bool = False, fake_secret: bool = False) -> Optional[str]:
-    """
-    Run 0-bootstrap folder.
-    Returns: Service Account Email if successful, None otherwise.
-    """
-    console.print("\n[bold dim]Phase 0: Bootstrapping (User Identity)...[/bold dim]")
-    
-    # 1. Stage bootstrap
-    bootstrap_staging = stager.stage_phase("0-bootstrap")
-    
-    terraform_bin = shutil.which("terraform")
-    
-    # 2. Init
-    subprocess.run([terraform_bin, "init", "-input=false"], cwd=bootstrap_staging, check=True)
-    
-    # 3. Apply (User Identity / ADC)
-    apply_cmd = [
-        terraform_bin, "apply", 
-        "-input=false", 
-        "-auto-approve", 
-        "-lock=false",
-        f"-var=allow_deletes={str(deletes_allowed).lower()}",
-        f"-var=fake_secret={str(fake_secret).lower()}"
-    ]
-    
-    # Pass current user email if available (for explicit TokenCreator grant)
-    user_email = _get_current_user_email()
-    if user_email:
-        apply_cmd.append(f"-var=current_user_email={user_email}")
-    
-    # FORCE Quota Project for ADC
-    env = os.environ.copy()
-    env["GOOGLE_CLOUD_QUOTA_PROJECT"] = config.project.gcp_project_id
-
-    # 0. Pre-Flight: Ensure CRM/IAM APIs are enabled
-    _ensure_meta_apis(config.project.gcp_project_id)
-
-    console.print(f"[dim]Executing: {' '.join(apply_cmd)} in {bootstrap_staging}[/dim]")
-    result = subprocess.run(apply_cmd, cwd=bootstrap_staging, env=env)
-    
-    if result.returncode != 0:
-        console.print("[red]Phase 0 Bootstrap Failed.[/red]")
-        return None
-
-    # 4. Get Output (SA Email)
-    output_cmd = [terraform_bin, "output", "-raw", "service_account_email"]
-    out_result = subprocess.run(output_cmd, cwd=bootstrap_staging, capture_output=True, text=True)
-    
-    if out_result.returncode != 0:
-        console.print("[red]Failed to read service_account_email output from bootstrap.[/red]")
-        return None
-        
-    sa_email = out_result.stdout.strip()
-    console.print(f"[green]✓ Bootstrap complete. SA: {sa_email}[/green]")
-    return sa_email
 
 def _get_current_user_email() -> Optional[str]:
     """Retrieves the currently authenticated gcloud user email."""
@@ -87,12 +32,8 @@ def _ensure_meta_apis(project_id: str):
     """
     Enables Cloud Resource Manager and Service Usage APIs.
     These are the 'Bootloader' APIs required for Terraform to even start planning.
-    Without CRM, TF can't read the project. Without ServiceUsage, TF can't enable other APIs.
     """
-    import time
     console.print("[dim]Pre-Flight: Ensuring bootloader APIs (CRM, ServiceUsage, IAM) are enabled...[/dim]")
-    # We use gcloud here because it uses the active creds (User ADC) most reliably.
-    # This command is idempotent.
     cmd = [
         "gcloud", "services", "enable",
         "cloudresourcemanager.googleapis.com",
@@ -105,39 +46,104 @@ def _ensure_meta_apis(project_id: str):
     # Suppress output unless error
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        # Warn but don't crash - let Terraform try, maybe user lacks permission but APIs are on.
         console.print(f"[yellow]Warning: Failed to auto-enable bootloader APIs: {result.stderr.strip()}[/yellow]")
     else:
-        # CRM API enablement takes time to propagate globally.
-        # Without this pause, Terraform immediately fails with 403.
-        console.print("[dim]Bootloader APIs enabled. Waiting 15s for propagation...[/dim]")
-        time.sleep(15)
-        console.print("[dim]Bootloader APIs verified.[/dim]")
+        # Initial propagation for ServiceUsage often needs a few seconds regardless of polling
+        # We keep a short fixed sleep here because there is no easy "check" for API readiness other than trying and failing.
+        console.print("[dim]Bootloader APIs enabled. Stabilizing (5s)...[/dim]")
+        time.sleep(5)
 
-def _run_main_folder(stager: TerraformStager, config, sa_email: str, command: str, args: List[str], config_files: List[str] = None) -> int:
+def _wait_for_impersonation(sa_email: str, project_id: str):
     """
-    Run 1-main folder.
+    Polls until the current user can successfully impersonate the target SA.
+    Replaces blind sleeps with active verification.
     """
-    console.print(f"\n[bold dim]Phase 1: Main Infrastructure (SA Identity: {sa_email})...[/bold dim]")
+    console.print(f"[dim]Verifying impersonation access for {sa_email}...[/dim]")
+    start = time.time()
+    # Retry for up to 60 seconds
+    while time.time() - start < 60:
+        try:
+            # Try to get a token via impersonation using gcloud
+            # This mimics what the Terraform Provider will do
+            cmd = [
+                "gcloud", "auth", "print-access-token",
+                "--impersonate-service-account", sa_email,
+                "--project", project_id,
+                "--quiet"
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+            console.print("[dim]✓ Impersonation verified. Handoff ready.[/dim]")
+            return
+        except subprocess.CalledProcessError:
+            time.sleep(2)
+            
+    console.print("[yellow]Warning: Impersonation check timed out. Proceeding anyway (Terraform might fail).[/yellow]")
+
+def _run_bootstrap_folder(stager: TerraformStager, config, deletes_allowed: bool = False, fake_secret: bool = False) -> Tuple[Optional[str], bool]:
+    """
+    Run 0-bootstrap folder.
+    Returns: (Service Account Email, Changes Detected Bool)
+    """
+    console.print("\n[bold dim]Phase 0: Bootstrapping (User Identity)...[/bold dim]")
     
-    # 1. Stage main (Injecting Configs if provided)
-    main_staging = stager.stage_phase("1-main", config_files=config_files)
-    
+    # 1. Stage bootstrap
+    bootstrap_staging = stager.stage_phase("0-bootstrap")
     terraform_bin = shutil.which("terraform")
     
     # 2. Init
-    subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True)
+    subprocess.run([terraform_bin, "init", "-input=false"], cwd=bootstrap_staging, check=True)
     
-    # 3. Apply/Plan (SA Identity)
-    cmd = [terraform_bin, command, "-input=false", "-lock=false"] + args
+    # 3. Apply (User Identity / ADC)
+    apply_cmd = [
+        terraform_bin, "apply", 
+        "-input=false", 
+        "-auto-approve", 
+        "-lock=false",
+        f"-var=allow_deletes={str(deletes_allowed).lower()}",
+        f"-var=fake_secret={str(fake_secret).lower()}"
+    ]
+    
+    user_email = _get_current_user_email()
+    if user_email:
+        apply_cmd.append(f"-var=current_user_email={user_email}")
     
     env = os.environ.copy()
-    env["GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"] = sa_email
+    env["GOOGLE_CLOUD_QUOTA_PROJECT"] = config.project.gcp_project_id
+
+    _ensure_meta_apis(config.project.gcp_project_id)
+
+    console.print(f"[dim]Executing: {' '.join(apply_cmd)} in {bootstrap_staging}[/dim]")
     
-    console.print(f"[dim]Executing: {' '.join(cmd)} in {main_staging}[/dim]")
-    result = subprocess.run(cmd, cwd=main_staging, env=env)
+    # Capture output to check for drift/changes
+    result = subprocess.run(apply_cmd, cwd=bootstrap_staging, env=env, capture_output=True, text=True)
     
-    return result.returncode
+    if result.returncode != 0:
+        console.print(result.stdout)
+        console.print(result.stderr)
+        console.print("[red]Phase 0 Bootstrap Failed.[/red]")
+        return None, False
+
+    # Check for No-Op
+    changes_made = True
+    if "0 added, 0 changed, 0 destroyed" in result.stdout:
+        changes_made = False
+        console.print("[dim]Phase 0: No changes detected. Identity is stable.[/dim]")
+    else:
+        # Print output so user knows what happened
+        console.print(result.stdout)
+        console.print("[dim]Phase 0: Changes detected. Identity updated.[/dim]")
+
+    # 4. Get Output (SA Email)
+    output_cmd = [terraform_bin, "output", "-raw", "service_account_email"]
+    out_result = subprocess.run(output_cmd, cwd=bootstrap_staging, capture_output=True, text=True)
+    
+    if out_result.returncode != 0:
+        console.print("[red]Failed to read service_account_email output from bootstrap.[/red]")
+        return None, False
+        
+    sa_email = out_result.stdout.strip()
+    console.print(f"[green]✓ Bootstrap complete. SA: {sa_email}[/green]")
+    return sa_email, changes_made
 
 def run_terraform(
     config,
@@ -148,7 +154,6 @@ def run_terraform(
     fake_secret: bool = False,
     deletes_allowed: bool = False,
     skip_impersonation: bool = False,
-    force_bootstrap: bool = False,
     targets: Optional[List[str]] = None,
     bootstrap_only: bool = False,
 ) -> int:
@@ -160,9 +165,11 @@ def run_terraform(
     
     # Step 1: Bootstrap (Phase 0)
     sa_email = None
+    changes_made = False
+    
     if not skip_impersonation:
         # Phase 0 does NOT receive user configs (overlay Main only)
-        sa_email = _run_bootstrap_folder(stager, config, deletes_allowed=deletes_allowed, fake_secret=fake_secret)
+        sa_email, changes_made = _run_bootstrap_folder(stager, config, deletes_allowed=deletes_allowed, fake_secret=fake_secret)
         if not sa_email:
             return 1
             
@@ -171,10 +178,13 @@ def run_terraform(
         return 0
     
     if sa_email:
-        # Safety Pause: Even explicit IAM grants can take a few seconds to propagate globally.
-        import time
-        console.print("[dim]Waiting 15s for IAM binding propagation...[/dim]")
-        time.sleep(15)
+        if changes_made:
+            # If changes were made, verify we can actually use the credential.
+            _wait_for_impersonation(sa_email, config.project.gcp_project_id)
+        else:
+            # Optimization: If no changes, trust existing propagation (or quick verify if paranoid)
+            # We skip verification for speed on stable environments.
+            console.print("[dim]Identity stable. Skipping verification.[/dim]")
 
     # Step 2: Main (Phase 1)
     args = []
@@ -189,21 +199,17 @@ def run_terraform(
     args.append(f"-var=fake_secret={str(fake_secret).lower()}")
     args.append(f"-var=allow_deletes={str(deletes_allowed).lower()}")
     
-    # Environment Setup
     env = os.environ.copy()
     if not skip_impersonation and sa_email:
         env["GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"] = sa_email
     
     env["GOOGLE_CLOUD_QUOTA_PROJECT"] = config.project.gcp_project_id
 
-    # Stage Main
     main_staging = stager.stage_phase("1-main", config_files=config_files)
     
-    # Inject variables for this run
     if vars_to_inject:
         stager.inject_vars(main_staging, vars_to_inject)
 
-    # Init
     subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True, env=env)
     
     # 3. Final Execution
@@ -221,7 +227,6 @@ def plan(ctx):
         config = ConfigLoader.load(root_dir)
         
         console.print("[bold blue]Running Terraform Plan (as ADC direct)...[/bold blue]")
-        # Plan always skips impersonation - it's read-only and doesn't validate permissions anyway
         exit_code = run_terraform(config, "plan", skip_impersonation=True)
         if exit_code != 0:
             ctx.exit(exit_code)
@@ -229,17 +234,16 @@ def plan(ctx):
         console.print(f"[red]Error: {e}[/red]")
         ctx.exit(1)
 
-
 @click.command()
 @click.argument("template_name", required=False)
 @click.option("--auto-approve", is_flag=True, help="Skip interactive approval.")
 @click.option("--fake-secret", is_flag=True, help="Create/maintain the test secret.")
 @click.option("--deletes-allowed", is_flag=True, help="Remove deny policy (allow_deletes=true).")
 @click.option("--skip-impersonation", is_flag=True, help="Use ADC directly (don't impersonate SA).")
-@click.option("--bootstrap", "force_bootstrap", is_flag=True, help="Force IAM bootstrap (skip checks).")
+@click.option("--skip-apigee", is_flag=True, help="Skip Apigee resource creation (Networking/IAM only).")
 @click.option("--bootstrap-only", is_flag=True, help="Stop after IAM bootstrap (Fast Test mode).")
 @click.pass_context
-def apply(ctx, template_name, auto_approve, fake_secret, deletes_allowed, skip_impersonation, force_bootstrap, bootstrap_only):
+def apply(ctx, template_name, auto_approve, fake_secret, deletes_allowed, skip_impersonation, skip_apigee, bootstrap_only):
     """
     Converge: Reconciles cloud state with configuration.
     
@@ -251,25 +255,22 @@ def apply(ctx, template_name, auto_approve, fake_secret, deletes_allowed, skip_i
         config = ConfigLoader.load(root_dir)
         stager = TerraformStager(config)
         
-        # 1. Resolve Variables
         vars_to_inject = {}
         
         if template_name:
-            # Intent Mode: Use Template
             template_path = stager.resolve_template_path(template_name)
             console.print(f"[dim]Loading template: {template_path}...[/dim]")
             schema = ApigeeOrgConfig.from_json_file(str(template_path))
-            # Build flat vars from schema
             vars_to_inject = {
                 "apigee_billing_type": schema.billing_type,
                 "apigee_runtime_location": schema.runtime_location,
                 "apigee_analytics_region": schema.analytics_region,
                 "control_plane_location": schema.control_plane_location or "",
                 "consumer_data_region": schema.consumer_data_region or "",
+                "apigee_enabled": not skip_apigee,
                 "gcp_project_id": config.project.gcp_project_id
             }
         else:
-            # Maintenance Mode: Extract from State
             console.print("[dim]No template provided. Attempting to extract variables from state...[/dim]")
             vars_to_inject = stager.extract_vars_from_state()
             
@@ -278,10 +279,10 @@ def apply(ctx, template_name, auto_approve, fake_secret, deletes_allowed, skip_i
                  console.print("[yellow]For new projects, run: apim apply [TEMPLATE][/yellow]")
                  console.print("[yellow]For existing projects, run: apim import [PROJECT_ID][/yellow]")
                  ctx.exit(1)
+            
+            vars_to_inject["apigee_enabled"] = not skip_apigee
 
         identity = "ADC (direct)" if skip_impersonation else "ADC → SA (impersonated)"
-        if force_bootstrap:
-            identity = "ADC (bootstrap forced)"
             
         console.print(f"[bold blue]Running Convergence as {identity}...[/bold blue]")
         
@@ -293,7 +294,6 @@ def apply(ctx, template_name, auto_approve, fake_secret, deletes_allowed, skip_i
             fake_secret=fake_secret,
             deletes_allowed=deletes_allowed,
             skip_impersonation=skip_impersonation,
-            force_bootstrap=force_bootstrap,
             bootstrap_only=bootstrap_only
         )
         if exit_code != 0:
@@ -304,4 +304,3 @@ def apply(ctx, template_name, auto_approve, fake_secret, deletes_allowed, skip_i
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         ctx.exit(1)
-

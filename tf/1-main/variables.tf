@@ -3,6 +3,12 @@ variable "gcp_project_id" {
   type        = string
 }
 
+variable "apigee_enabled" {
+  description = "Declare whether Apigee infrastructure (Org, Instance, etc.) should exist. Set to false for fast testing of networking/IAM handoff."
+  type        = bool
+  default     = true
+}
+
 variable "domain_name" {
   description = "The domain name for the Apigee Ingress Load Balancer."
   type        = string

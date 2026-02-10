@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import os
 import json
+import time
 from pathlib import Path
 from rich.console import Console
 from scripts.cli.config import ConfigLoader
@@ -80,10 +81,18 @@ def import_cmd(ctx, project_id, force):
         # Imports (Phase 0)
         def try_import(staging_dir, resource_addr, resource_id):
             console.print(f"[dim]  Checking {resource_addr}...[/dim]")
-            subprocess.run(
+            result = subprocess.run(
                 [terraform_bin, "import", "-input=false", "-lock=false", resource_addr, resource_id],
-                cwd=staging_dir, capture_output=True, env=env
+                cwd=staging_dir, capture_output=True, env=env, text=True
             )
+            if result.returncode == 0:
+                console.print(f"[green]  + Imported {resource_addr}[/green]")
+            elif "Resource already managed" in result.stderr:
+                console.print(f"[dim]  . Already managed: {resource_addr}[/dim]")
+            else:
+                # We don't error out because maybe the resource genuinely doesn't exist
+                # But we debug log it
+                console.print(f"[dim]  - Not found (or error): {result.stderr.strip().split('\n')[0]}[/dim]")
 
         try_import(bootstrap_staging, "google_service_account.deployer", f"projects/{project_id}/serviceAccounts/terraform-deployer@{project_id}.iam.gserviceaccount.com")
         # Note: Deny policy ID is complex, skipping for brevity or add if needed.
@@ -92,6 +101,9 @@ def import_cmd(ctx, project_id, force):
         sa_email = _run_bootstrap_folder(stager, config)
         if not sa_email:
             ctx.exit(1)
+            
+        console.print("[dim]Waiting 15s for IAM binding propagation...[/dim]")
+        time.sleep(15)
             
         console.print(f"\n[bold dim]Phase 1: Hydrating Infrastructure State...[/bold dim]")
         main_staging = stager.stage_phase("1-main")

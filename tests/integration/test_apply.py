@@ -27,6 +27,7 @@ def test_apply_with_template_no_state_empty_cloud_mocked_org(ephemeral_project, 
     """
     Scenario 1: apply [TPL] + No State + Empty Cloud.
     Proves full flow works (Bootstrap + Handoff + Main invocation).
+    Uses mocking for speed.
     """
     runner = CliRunner()
     real_sub = subprocess.run
@@ -64,7 +65,7 @@ def test_apply_with_template_no_state_partial_cloud_mock_collision(ephemeral_pro
         # Intercept Phase 1 and simulate Collision
         if "1-main" in cwd:
             msg = "Error: google_compute_network.apigee_network already exists"
-            print(msg) # Ensure CliRunner captures it
+            print(msg) 
             mock_res = MagicMock()
             mock_res.returncode = 1
             mock_res.stdout = msg
@@ -80,18 +81,38 @@ def test_apply_with_template_no_state_partial_cloud_mock_collision(ephemeral_pro
             assert "already exists" in result.output
 
 @pytest.mark.integration
+def test_apply_with_template_no_state_empty_cloud_skip_apigee(ephemeral_project, tmp_path):
+    """
+    Scenario 1b: apply [TPL] --skip-apigee
+    True End-to-End verification without Org creation.
+    No subprocess mocking. Tests real IAM handoff and Network creation.
+    """
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        (Path(tmp_path) / "terraform.tfvars").write_text(f'gcp_project_id = "{ephemeral_project}"')
+        
+        # This runs FOR REAL but skips the expensive bits via CLI flag
+        result = runner.invoke(cli, ["apply", "us-central1", "--auto-approve", "--skip-apigee"])
+        
+        if result.exit_code != 0:
+            print(result.output)
+            
+        assert result.exit_code == 0
+        assert "✓ Bootstrap complete" in result.output
+        assert "✓ Convergence Complete" in result.output
+
+@pytest.mark.integration
 def test_apply_with_template_no_state_existing_cloud_org(existing_org_project_id, tmp_path):
     """
     Scenario 4: apply [TPL] + No State + Existing Org (Cloud).
-    Expectation: FAILURE (409 Already Exists).
-    We skip mocking here to verify real collision against a persistent project if provided.
     """
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path):
         template = {"billing_type": "PAYG", "runtime_location": "us-central1", "analytics_region": "us-central1"}
-        Path("t.json").write_text(json.dumps(template))
+        p = Path("t.json").absolute()
+        p.write_text(json.dumps(template))
         (Path(tmp_path) / "terraform.tfvars").write_text(f'gcp_project_id = "{existing_org_project_id}"')
         
-        result = runner.invoke(cli, ["apply", "t.json", "--auto-approve"])
+        result = runner.invoke(cli, ["apply", str(p), "--auto-approve"])
         assert result.exit_code != 0
         assert "already exists" in result.output

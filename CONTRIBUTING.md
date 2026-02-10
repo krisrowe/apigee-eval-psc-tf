@@ -48,6 +48,30 @@ Before committing, ensure you run:
 - `consult precommit`: Scans for sensitive identifiers and PII.
 - `devws precommit`: Checks git history integrity.
 
+## Identity & Bootstrap Model
+
+This project follows a **Two-Phase Identity Handoff** model:
+
+1.  **Phase 0 (Bootstrap):** Executes as the **User Identity** (via ADC). This phase is responsible for creating the Service Account (`terraform-deployer`) and granting it necessary IAM permissions (Project Owner).
+2.  **Phase 1 (Main):** Executes as the **Service Account Identity** (via Impersonation). This phase provisions the Apigee infrastructure.
+
+### Continuous Bootstrap
+To ensure maximum reliability and "Self-Healing" access, the CLI executes **Phase 0 (Bootstrap) on every invocation** of `apply` or `import`.
+
+**Rationale:**
+- **Active Repair:** If the Service Account or its IAM bindings are accidentally deleted or modified in the cloud, the CLI automatically restores them during the next `apply` cycle.
+- **Immediate Grant:** The bootstrap phase explicitly grants the current user the `roles/iam.serviceAccountTokenCreator` role on the new SA, ensuring that impersonation handoff works immediately even on fresh projects.
+- **Idempotency:** Standard Terraform `apply` mechanics ensure this check is fast (5-10s) and non-destructive if no changes are required.
+
+### Internal Testing Flags
+The CLI includes hidden flags primarily used by the integration test suite to verify safety mechanisms.
+
+| Flag | Purpose |
+|---|---|
+| `--fake-secret` | Creates a dummy Secret Manager resource. Used by `test_deny_deletes.py` to verify IAM policies block deletion. |
+| `--deletes-allowed` | Temporarily disables the IAM Deny Policy. Used by tests to clean up resources after verifying the block. |
+| `--skip-impersonation` | **Deprecated/Debug Only.** Forces the CLI to use ADC credentials for Phase 1 instead of the Service Account. Useful if IAM propagation is blocked in a specific environment. |
+
 ## Integration Testing
 
 Integration tests run against **REAL** Google Cloud Platform projects. They are located in `tests/integration/` and are excluded from the default `make test` command (which runs unit tests only).
