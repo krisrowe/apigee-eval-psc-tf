@@ -191,6 +191,12 @@ def run_terraform(
     if bootstrap_only:
         console.print("[yellow]Skipping Main Phase (bootstrap-only requested).[/yellow]")
         return 0
+    
+    if sa_email:
+        # Safety Pause: Even explicit IAM grants can take a few seconds to propagate globally.
+        import time
+        console.print("[dim]Waiting 15s for IAM binding propagation...[/dim]")
+        time.sleep(15)
 
     # Step 2: Main (Phase 1)
     args = []

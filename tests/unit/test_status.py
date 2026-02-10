@@ -40,8 +40,13 @@ def test_status_success(cloud_provider, tmp_path):
         result = runner.invoke(cli, ["status"])
 
         assert result.exit_code == 0
-        assert f"ENVIRONMENT STATUS: {project_id}" in result.output
-        assert "Billing:               PAYG" in result.output
-        assert "DRZ:                   Yes" in result.output
-        assert "Control Plane:         ca" in result.output
-        assert "✓ Environments: dev" in result.output
+        
+        # Strip ANSI codes
+        import re
+        clean_output = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', result.output)
+        
+        assert f"ENVIRONMENT STATUS: {project_id}" in clean_output
+        assert "Billing:               PAYG" in clean_output
+        assert "DRZ:                   Yes" in clean_output
+        assert "Control Plane:         ca" in clean_output
+        assert "✓ Environments: dev" in clean_output

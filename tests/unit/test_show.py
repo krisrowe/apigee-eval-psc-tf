@@ -20,12 +20,18 @@ def test_show_displays_local_paths(tmp_path):
         assert "terraform.tfvars" in result.output
         assert "State:" in result.output
 
+import re
+
+def strip_ansi(text):
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
+
 def test_show_displays_cloud_status(cloud_provider, tmp_path):
     """
     'apim show' should display cloud status via provider when project is attached.
     """
     project_id = "test-project"
-    
+
     # Setup Mock State for provider
     cloud_provider.orgs[project_id] = {
         "billing_type": "EVALUATION",
@@ -37,7 +43,7 @@ def test_show_displays_cloud_status(cloud_provider, tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path):
         Path("terraform.tfvars").write_text(f'gcp_project_id = "{project_id}"\n')
-        
+
         # Simulate state file existence
         from scripts.cli.paths import get_state_path
         state_file = get_state_path(project_id)
@@ -47,7 +53,8 @@ def test_show_displays_cloud_status(cloud_provider, tmp_path):
         result = runner.invoke(cli, ["show"])
 
         assert result.exit_code == 0
-        assert "CLOUD STATUS (via Terraform State):" in result.output
-        assert "Billing:         EVALUATION" in result.output
-        assert "DRZ:             No" in result.output
-        assert "✓ Environments: dev, prod" in result.output
+        clean_output = strip_ansi(result.output)
+        assert "CLOUD STATUS (via Terraform State):" in clean_output
+        assert "Billing:         EVALUATION" in clean_output
+        assert "DRZ:             No" in clean_output
+        assert "✓ Environments: dev, prod" in clean_output
