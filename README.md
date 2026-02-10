@@ -11,6 +11,36 @@ This installs the `apim` CLI tool to your system path.
 
 ---
 
+## Prerequisites & Setup
+
+Before using `apim`, ensure you have a Google Cloud Project with billing enabled.
+
+1.  **Authenticate:**
+    ```bash
+    gcloud auth login
+    gcloud auth application-default login
+    ```
+    *Requirement:* You currently need **Organization Admin** or **Billing Admin** privileges to create new projects and link billing.
+
+2.  **Create a Project (Optional):**
+    ```bash
+    export PROJECT_ID="my-new-apigee-project"
+    gcloud projects create $PROJECT_ID
+    ```
+
+3.  **Link Billing:**
+    Find your Billing Account ID:
+    ```bash
+    gcloud billing accounts list
+    ```
+    Link it to your project:
+    ```bash
+    export BILLING_ID="012345-6789AB-CDEF01"
+    gcloud billing projects link $PROJECT_ID --billing-account $BILLING_ID
+    ```
+
+---
+
 ## Quick Start
 
 ### 🟢 Scenario 1: New Project (Greenfield)

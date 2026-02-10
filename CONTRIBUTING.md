@@ -131,3 +131,7 @@ As of the "Centralized Status & Coarse-Grained Provider" refactor:
 
 **Future Optimization:**
 To restore performance without sacrificing correctness, we can implement a Global Plugin Cache by setting `TF_PLUGIN_CACHE_DIR` in the CLI engine. This is a known optimization path if build times become an issue.
+
+## Future Enhancements
+*   **Broadened Role Support:** Future versions aim to support standard **Project Owners** and consumer **@gmail.com** accounts, removing the strict requirement for Organization Admin privileges during the bootstrap phase.
+*   **Import Block Generation:** Replace `terraform import` loops with declarative `import { ... }` blocks for more robust state adoption.
