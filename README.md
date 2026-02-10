@@ -52,12 +52,10 @@ Before using `apim`, ensure you have a Google Cloud Project with billing enabled
 You have a fresh GCP project and want to deploy Apigee.
 
 1.  **Configure Project:**
-    Navigate to the directory where you want to maintain your project configuration and set the active context:
+    Initialize the local directory:
     ```bash
-    cd ~/my-apigee-workspace
     apim project set my-project-id
     ```
-    *(This creates/updates `terraform.tfvars` in the current directory automatically)*
 
 2.  **Define Template:** Create a `template.json` to define your desired Apigee state.
     ```json
@@ -72,17 +70,13 @@ You have a fresh GCP project and want to deploy Apigee.
     ```bash
     apim apply template.json
     ```
-    *   **Phase 0:** Bootstraps Identity (Service Account, IAM).
-    *   **Phase 1:** Creates Network, Apigee Organization, Instance, and Environments.
-    *   *Note:* Non-interactive by default. Use `--interactive` to see the plan first.
 
 ### 🟡 Scenario 2: Existing Project (Adoption)
 You have an existing Apigee installation and want to manage it with this tool.
 
 1.  **Hydrate State:**
-    Navigate to your project directory and run `import` to discover existing resources:
+    Run `import` to discover existing resources:
     ```bash
-    cd ~/existing-project-dir
     apim import my-project-id
     ```
     *   *Note:* Use `--control-plane=ca` (or eu, au) for regional Data Residency projects.
@@ -95,11 +89,6 @@ You have an existing Apigee installation and want to manage it with this tool.
 ---
 
 ## CLI Reference
-
-### `apim project`
-Manage the active Google Cloud Project context.
-*   **`get`**: Shows the currently configured project.
-*   **`set [PROJECT_ID]`**: Updates `terraform.tfvars` with the new ID and checks for existing state.
 
 ### `apim apply [TEMPLATE]`
 Provisions or updates infrastructure. If a template is provided, it enforces that state. If not, it extracts configuration from the existing state.
@@ -117,6 +106,9 @@ Discovers existing Google Cloud resources and imports them into the local Terraf
 |---|---|
 | `--control-plane` | Specify the regional control plane (e.g., `ca`, `eu`). Required for finding DRZ Orgs. |
 | `--force` | Overwrites local `terraform.tfvars` if it already exists. |
+
+### `apim project set [PROJECT_ID]`
+Updates the local `terraform.tfvars` with a new Project ID and checks for existing state. Use `--force` to overwrite.
 
 ---
 
@@ -146,23 +138,15 @@ For regions requiring Data Residency (e.g. Canada, Europe), use a specific templ
 | **1b**| 🚀 | ✅ | ⭕ | ⭕ | "System Converged" | 🟢 | `test_apply_..._skip_apigee` | ✅ | 🆗 Verified |
 | **2** | 🚀 | ✅ | ⭕ | 🟡 | "System Converged" | 🟢 | `test_apply_..._bootstrap_only` | ✅ | 🆗 Verified |
 | **3** | 🚀 | ✅ | ⭕ | 🟡 | Error: 409 (Collision) | 🔵 | `test_apply_..._mock_collision` | ✅ | 🆗 Verified |
-| **7** | 🚀 | ⛔ | 🟢 | 🟢 | Terraform Plan (Drift) | - | *Core Terraform Behavior* | - | 🆗 Handled |
-| **8** | 🚀 | ⛔ | 🟢 | 🟢 | Error: prevent_destroy | 🧪 | `test_apply_..._existing_state` | ✅ | 🆗 Safe Block |
 | **12**| 🚀 | ❌ | 🟢 | 🟢 | "System Converged" | 🟢 | `test_deny_deletes_enforcement` | ✅ | 🆗 Verified |
 | **14**| 🔍 | ❌ | ⭕ | 🟢 | "State Hydrated Successful" | 🟢 | `test_import_..._discovery` | ✅ | 🆗 Verified |
-| **16**| 🔍🚀| ✅ | ⭕ | 🟡 | "System Converged" | 🟢 | `test_import_apply_..._fill_blanks` | ✅ | 🆗 Verified |
+| **15**| 🔍🚀| ✅ | ⭕ | 🟡 | "System Converged" | 🟢 | `test_import_apply_..._fill_blanks` | ✅ | 🆗 Verified |
 
 ### Legend
 - 🚀 `apply` | 🔍 `import`
 - 🟢 **Full Integration**: End-to-end against real GCP.
 - 🔵 **Partial Integration**: Real bootstrap + Mocked Main.
 - 🧪 **Unit Test**: Python logic verification.
-
----
-
-## Known Issues
-*   **Propagation Latency:** On brand new projects, GCP IAM propagation can take up to 60s. The CLI includes active polling for Service Account readiness, but very slow environments may still hit intermittent 403s on the first run.
-*   **Duplicate Imports:** If you manually modify the local state file, ensure you don't create overlapping resource addresses (e.g. `resource` vs `resource[0]`).
 
 ---
 
