@@ -79,8 +79,6 @@ class TerraformStager:
         """
         Stages a specific phase folder (e.g. '0-bootstrap', '1-main').
         Returns path to the staged directory for that phase.
-        We stage into 'tf/<phase_name>' to preserve relative paths if needed, 
-        but modules are now copied directly inside.
         """
         phase_staging = self.staging_dir / "tf" / phase_name
         console.print(f"[dim]Staging {phase_name} in {phase_staging}...[/dim]")
@@ -100,17 +98,84 @@ class TerraformStager:
         # 4. GENERATE BACKEND (unique state file per phase)
         self._generate_backend(phase_name, phase_staging)
         
-        # 5. GENERATE TFVARS (Bridge Config Object -> Flat TF Vars)
-        self._generate_tfvars(phase_staging)
-        
-        # 6. COPY USER FILES (overlay)
+        # 5. COPY USER FILES (overlay - e.g. terraform.tfvars)
         self._copy_user_files(phase_staging)
         
-        # 7. INJECT EXPLICT CONFIGS (--config)
+        # 6. INJECT EXPLICT CONFIGS (--config)
         if config_files:
             self._inject_configs(phase_staging, config_files)
 
         return phase_staging
+
+    def inject_vars(self, target_dir: Path, vars_dict: dict):
+        """Generates an ephemeral _apim_gen.auto.tfvars.json in target_dir for the current run."""
+        import json
+        tfvars_path = target_dir / "_apim_gen.auto.tfvars.json"
+        with open(tfvars_path, "w") as f:
+            json.dump(vars_dict, f, indent=2)
+        console.print(f"[dim]  + Injected ephemeral variables: {list(vars_dict.keys())}[/dim]")
+
+    def extract_vars_from_state(self, phase_name: str = "1-main") -> dict:
+        """
+        Reads the local terraform state and extracts immutable variables.
+        Used to regenerate config for updates without a template.
+        """
+        import json
+        import subprocess
+        import shutil
+        
+        # Path logic: ~/.local/share/apigee-tf/<proj>/tf/<phase>/terraform.tfstate
+        from scripts.cli.paths import get_state_path
+        state_path = get_state_path(self.config.project.gcp_project_id, phase=phase_name)
+        
+        if not state_path.exists():
+            return {}
+            
+        try:
+            # We can use terraform show -json <statefile> without init!
+            terraform_bin = shutil.which("terraform")
+            cmd = [terraform_bin, "show", "-json", str(state_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                return {}
+                
+            state = json.loads(result.stdout)
+            values = state.get("values", {}).get("root_module", {})
+            resources = values.get("resources", [])
+            
+            extracted = {}
+            
+            # Find Org
+            for res in resources:
+                if res["type"] == "google_apigee_organization":
+                    extracted["apigee_billing_type"] = res["values"].get("billing_type")
+                    extracted["apigee_analytics_region"] = res["values"].get("analytics_region")
+                    # Check DRZ
+                    consumer_loc = res["values"].get("api_consumer_data_location")
+                    if consumer_loc:
+                        extracted["consumer_data_region"] = consumer_loc
+                        # Infer control plane
+                        if "northamerica" in consumer_loc:
+                            extracted["control_plane_location"] = "ca"
+                        elif "europe" in consumer_loc:
+                            extracted["control_plane_location"] = "eu"
+                
+                if res["type"] == "google_apigee_instance":
+                    extracted["apigee_runtime_location"] = res["values"].get("location")
+            
+            # Defaults if missing but org found
+            if extracted and "control_plane_location" not in extracted:
+                 extracted["control_plane_location"] = "" # Global
+            
+            if extracted:
+                console.print(f"[dim]  + Extracted variables from state: {list(extracted.keys())}[/dim]")
+                
+            return extracted
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract state: {e}")
+            return {}
 
     def _wipe_dir(self, target_dir: Path):
         """Standard wipe that preserves the directory itself if needed, but shutil.rmtree is cleaner."""
@@ -139,6 +204,7 @@ class TerraformStager:
     def _generate_backend(self, phase_name: str, target_dir: Path):
         """Generates a local backend configuration."""
         # Use centralized path logic
+        from scripts.cli.paths import get_state_path
         state_path = get_state_path(
             self.config.project.gcp_project_id, 
             phase=phase_name, 
@@ -154,26 +220,6 @@ terraform {{
 }}
 '''
         (target_dir / "backend.tf").write_text(backend_config)
-
-    def _generate_tfvars(self, target_dir: Path):
-        """Generates auto.tfvars.json in target_dir."""
-        import json
-        tfvars_content = {
-            "gcp_project_id": self.config.project.gcp_project_id,
-            "apigee_runtime_location": self.config.project.region,
-            "apigee_analytics_region": self.config.apigee.analytics_region,
-            "domain_name": self.config.network.domain,
-            "control_plane_location": self.config.apigee.control_plane_location,
-            "billing_type": self.config.apigee.billing_type, 
-            "apigee_billing_type": self.config.apigee.billing_type,
-        }
-        
-        if self.config.apigee.consumer_data_region:
-            tfvars_content["consumer_data_region"] = self.config.apigee.consumer_data_region
-        
-        tfvars_path = target_dir / "_apim_gen.auto.tfvars.json"
-        with open(tfvars_path, "w") as f:
-            json.dump(tfvars_content, f, indent=2)
 
     def _inject_configs(self, target_dir: Path, config_files: list[str]):
         """Resolves and copies explicit config files."""

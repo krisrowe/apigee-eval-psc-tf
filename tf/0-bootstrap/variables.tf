@@ -63,6 +63,12 @@ variable "admin_group_email" {
   default     = null
 }
 
+variable "current_user_email" {
+  description = "The email of the user running Terraform (used to grant Token Creator role)."
+  type        = string
+  default     = null
+}
+
 # --- IDENTITY & DENY-DELETES TEST VARIABLES ---
 
 variable "skip_impersonation" {

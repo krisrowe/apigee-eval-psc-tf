@@ -95,7 +95,6 @@ resource "google_apigee_organization" "apigee_org" {
 
   lifecycle {
     prevent_destroy = true
-    ignore_changes  = [analytics_region, billing_type]
   }
 
   depends_on = [

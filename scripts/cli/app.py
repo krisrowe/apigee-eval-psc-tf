@@ -25,8 +25,6 @@ import importlib
 
 # Register Core Commands
 from scripts.cli.commands.core import plan, apply
-from scripts.cli.commands.create import create
-from scripts.cli.commands.update import update
 
 # Dynamic import for 'import.py' to avoid keyword collision
 try:
@@ -43,8 +41,6 @@ from scripts.cli.commands.show import show_cmd
 from scripts.cli.commands.status import status_cmd
 from scripts.cli.commands.list import list_cmd
 
-cli.add_command(create)
-cli.add_command(update)
 cli.add_command(import_cmd, name="import")
 cli.add_command(plan)
 cli.add_command(apply)

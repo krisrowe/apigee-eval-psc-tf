@@ -27,32 +27,28 @@ resource "google_service_account" "deployer" {
   display_name = "Terraform Deployer Service Account"
 }
 
+# --- IMPERSONATION ACCESS ---
+# Explicitly grant the creating user the ability to impersonate this SA.
+# This propagates faster than Project Owner inheritance.
+resource "google_service_account_iam_member" "token_creator" {
+  count              = var.current_user_email != null ? 1 : 0
+  service_account_id = google_service_account.deployer.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "user:${var.current_user_email}"
+}
+
 # --- ADMIN GROUP (SECURITY BEST PRACTICE) ---
-# We avoid assigning roles directly to the Service Account.
-# Instead, we create a Google Group, assign roles to the Group, and make the SA a member.
-# This allows for:
-# 1. Auditability: Single place to see who has admin access (the group members).
-# 2. Stacking: We can add human admins to this group for emergency access without changing IAM bindings.
-resource "google_cloud_identity_group" "apigee_admins" {
-  display_name = "Apigee Admins"
-  description  = "Members of this group have Apigee administrative privileges."
-  parent       = "customers/${local.org_customer_id}"
-  
+# We treat the Admin Group as a Global Singleton. 
+# It is assumed to exist at the Organization level.
+data "google_cloud_identity_group_lookup" "apigee_admins" {
   group_key {
     id = "apigee-admins@${local.org_domain}"
   }
-  
-  labels = {
-    "cloudidentity.googleapis.com/groups.discussion_forum" = ""
-  }
-  
-  depends_on = [google_project_service.cloudidentity]
 }
 
 # Add the terraform-deployer SA to the group
-# This ensures the SA inherits the permissions granted to the group.
 resource "google_cloud_identity_group_membership" "deployer_in_admins" {
-  group    = google_cloud_identity_group.apigee_admins.id
+  group    = data.google_cloud_identity_group_lookup.apigee_admins.name
   
   preferred_member_key {
     id = google_service_account.deployer.email
@@ -64,12 +60,10 @@ resource "google_cloud_identity_group_membership" "deployer_in_admins" {
 }
 
 # Grant Owner to the GROUP (not the SA directly)
-# The Service Account becomes an Owner ONLY because it is a member of this group.
 resource "google_project_iam_member" "admin_group_owner" {
   project    = var.gcp_project_id
   role       = "roles/owner"
   member     = "group:apigee-admins@${local.org_domain}"
-  depends_on = [google_cloud_identity_group.apigee_admins]
 }
 
 # --- DENY POLICY ---
@@ -80,8 +74,6 @@ resource "google_iam_deny_policy" "protect_deletes" {
   provider = google-beta
   name     = "protect-deletes"
   parent   = "cloudresourcemanager.googleapis.com%2Fprojects%2F${var.gcp_project_id}"
-  
-  # depends_on = [google_project_service.crm] # Removed as API enablement is assumed/handled
   
   rules {
     deny_rule {
