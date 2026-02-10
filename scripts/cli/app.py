@@ -53,9 +53,9 @@ except ImportError as e:
 from scripts.cli.commands.show import show_cmd
 from scripts.cli.commands.status import status_cmd
 from scripts.cli.commands.list import list_cmd
-from scripts.cli.commands.init import init
+from scripts.cli.commands.project import project
 
-cli.add_command(init)
+cli.add_command(project)
 cli.add_command(import_cmd, name="import")
 cli.add_command(plan)
 cli.add_command(apply)
