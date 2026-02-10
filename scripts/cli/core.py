@@ -4,12 +4,13 @@ import urllib.parse
 import json
 import subprocess
 import os
+import socket
 from pathlib import Path
 import hcl2
+from scripts.cli.paths import get_state_path, get_data_dir
 
 # XDG Paths
 XDG_CONFIG_HOME = Path.home() / ".config" / "apigee-tf"
-STATE_ROOT = Path.home() / ".local" / "share" / "apigee-tf" / "states"
 SETTINGS_FILE = XDG_CONFIG_HOME / "settings.json"
 
 def api_request(method, path, body=None, headers=None):
@@ -85,32 +86,22 @@ def save_settings(settings):
 
 def ensure_dirs():
     """Ensure that the state directory exists."""
-    STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    get_data_dir().mkdir(parents=True, exist_ok=True)
 
 def get_project_paths():
     """
     Resolve paths for the local project.
-    Checks for 'terraform.tfvars' or 'apigee.tfvars' in CWD.
-    
-    We parse the file manually here to avoid the overhead of the full engine load
-    just to determine the state file location.
+    Checks for 'terraform.tfvars' in CWD.
+    Returns (config_file, state_file).
     """
     var_file = Path.cwd() / "terraform.tfvars"
-    for fname in ["terraform.tfvars", "apigee.tfvars"]:
-        candidate = Path.cwd() / fname
-        if candidate.exists():
-            var_file = candidate
-            break
-
+    
     project_id = None
     state_suffix = None
     
     if var_file.exists():
         try:
             with open(var_file, 'r') as f:
-                # Use a lightweight regex check for the project ID
-                # This ensures we find the ID even in nested or complex HCL blocks
-                # without requiring a full HCL2 parse every time the CLI starts.
                 import re
                 content = f.read()
                 pid_match = re.search(r'gcp_project_id\s*=\s*["\']([^"\']+)["\']', content)
@@ -123,15 +114,17 @@ def get_project_paths():
         except Exception:
             pass
 
-    state_name = project_id if project_id else "local"
-    if state_suffix:
-        state_name = f"{state_name}-{state_suffix}"
+    if project_id:
+        # Use centralized logic. Default to 1-main for 'show' command context.
+        state_file = get_state_path(project_id, phase="1-main", suffix=state_suffix)
+    else:
+        # Fallback if no config found
+        state_file = Path("NOT_FOUND")
         
-    state_file = STATE_ROOT / f"{state_name}.tfstate"
     return var_file, state_file
 
 def load_vars():
-    """Load variables from the local apigee.tfvars file."""
+    """Load variables from the local terraform.tfvars file."""
     var_file, _ = get_project_paths()
     if not var_file.exists():
         return {}
@@ -139,30 +132,13 @@ def load_vars():
     try:
         with open(var_file, 'r') as f:
             data = hcl2.load(f)
-            # Flatten HCL2 output which usually returns lists for every key
             return {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in data.items()}
     except Exception:
         return {}
 
 def load_tfstate():
     """Load terraform state for the local project (Phase 1-main)."""
-    # Assuming XDG_DATA_HOME/apigee-tf/<project_id>/tf/1-main/terraform.tfstate
-    
-    # 1. Get Project ID
-    vars_dict = load_vars()
-    project_id = vars_dict.get("gcp_project_id")
-    if not project_id:
-        return None
-        
-    # 2. Resolve Path
-    data_home = os.environ.get("APIGEE_TF_DATA_DIR")
-    if data_home:
-        root = Path(data_home)
-    else:
-        root = Path.home() / ".local/share/apigee-tf"
-        
-    # TODO: Support state_suffix if we expose it in load_vars/config
-    state_file = root / project_id / "tf" / "1-main" / "terraform.tfstate"
+    _, state_file = get_project_paths()
     
     if state_file.exists():
         try:

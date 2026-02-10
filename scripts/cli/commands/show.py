@@ -25,15 +25,23 @@ def show_cmd(ctx, raw):
         return
 
     # 2. Local Status
+    state_disp = str(state_file)
+    if state_file.exists():
+        state_disp = state_disp.replace(str(Path.home()), "~")
+    else:
+        state_disp = "[yellow]NOT INITIALIZED[/yellow]"
+
     console.print(f"\n[bold underline]LOCAL PROJECT STATUS[/bold underline]")
     console.print(f"  [bold]Config:[/bold] {str(var_file)}")
-    console.print(f"  [bold]State:[/bold]  {str(state_file) if state_file.exists() else '[yellow]NOT INITIALIZED[/yellow]'}")
+    console.print(f"  [bold]State:[/bold]  {state_disp}")
     
     # 3. Project Configuration & Cloud Status
     vars_dict = load_vars()
-    project_id = vars_dict.get('gcp_project_id')
+    project_id = vars_dict.get('gcp_project_id', 'UNKNOWN')
 
-    if project_id:
+    console.print(f"\n[bold blue]PROJECT: {project_id}[/bold blue]")
+
+    if project_id != 'UNKNOWN':
         console.print(f"\n[bold]CLOUD STATUS (via Terraform State):[/bold]")
         provider = get_cloud_provider()
         status = provider.get_status(project_id)

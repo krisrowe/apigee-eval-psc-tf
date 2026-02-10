@@ -117,12 +117,10 @@ class TerraformStager:
 
     def extract_vars_from_state(self, phase_name: str = "1-main") -> dict:
         """
-        Reads the local terraform state and extracts immutable variables.
-        Used to regenerate config for updates without a template.
+        Reads the local terraform state file directly and extracts immutable variables.
+        No terraform binary execution required.
         """
         import json
-        import subprocess
-        import shutil
         
         # Path logic: ~/.local/share/apigee-tf/<proj>/tf/<phase>/terraform.tfstate
         from scripts.cli.paths import get_state_path
@@ -132,27 +130,28 @@ class TerraformStager:
             return {}
             
         try:
-            # We can use terraform show -json <statefile> without init!
-            terraform_bin = shutil.which("terraform")
-            cmd = [terraform_bin, "show", "-json", str(state_path)]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            with open(state_path, "r") as f:
+                state = json.load(f)
             
-            if result.returncode != 0:
-                return {}
-                
-            state = json.loads(result.stdout)
-            values = state.get("values", {}).get("root_module", {})
-            resources = values.get("resources", [])
+            # The raw tfstate (v4) structure has resources at the top level
+            resources = state.get("resources", [])
             
             extracted = {}
             
-            # Find Org
             for res in resources:
-                if res["type"] == "google_apigee_organization":
-                    extracted["apigee_billing_type"] = res["values"].get("billing_type")
-                    extracted["apigee_analytics_region"] = res["values"].get("analytics_region")
+                res_type = res.get("type")
+                instances = res.get("instances", [])
+                if not instances:
+                    continue
+                
+                # We usually only have 1 instance for these, but take the first
+                attrs = instances[0].get("attributes", {})
+                
+                if res_type == "google_apigee_organization":
+                    extracted["apigee_billing_type"] = attrs.get("billing_type")
+                    extracted["apigee_analytics_region"] = attrs.get("analytics_region")
                     # Check DRZ
-                    consumer_loc = res["values"].get("api_consumer_data_location")
+                    consumer_loc = attrs.get("api_consumer_data_location")
                     if consumer_loc:
                         extracted["consumer_data_region"] = consumer_loc
                         # Infer control plane
@@ -161,8 +160,8 @@ class TerraformStager:
                         elif "europe" in consumer_loc:
                             extracted["control_plane_location"] = "eu"
                 
-                if res["type"] == "google_apigee_instance":
-                    extracted["apigee_runtime_location"] = res["values"].get("location")
+                if res_type == "google_apigee_instance":
+                    extracted["apigee_runtime_location"] = attrs.get("location")
             
             # Defaults if missing but org found
             if extracted and "control_plane_location" not in extracted:
@@ -174,7 +173,7 @@ class TerraformStager:
             return extracted
             
         except Exception as e:
-            logger.warning(f"Failed to extract state: {e}")
+            console.print(f"[yellow]Warning: Failed to parse state file {state_path.name}: {e}[/yellow]")
             return {}
 
     def _wipe_dir(self, target_dir: Path):

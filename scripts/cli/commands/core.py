@@ -19,14 +19,15 @@ def is_debug() -> bool:
     """Checks if debug logging is enabled."""
     return os.environ.get("LOG_LEVEL") == "DEBUG"
 
-def _execute_command(cmd: List[str], cwd: Path, env: dict, label: str) -> subprocess.CompletedProcess:
+def _execute_command(cmd: List[str], cwd: Path, env: dict, label: str, stream: bool = False) -> subprocess.CompletedProcess:
     """
-    Executes a command with a spinner.
-    If LOG_LEVEL=DEBUG, streams output live.
-    Otherwise, captures and only shows on error.
+    Executes a command.
+    If stream=True, prints output live (no spinner).
+    If stream=False, shows spinner and captures output (showing only on error).
     """
-    if is_debug():
+    if stream or is_debug():
         console.print(f"[dim]Executing: {' '.join(cmd)} in {cwd}[/dim]")
+        # Run directly, connecting stdout/stderr to terminal
         return subprocess.run(cmd, cwd=cwd, env=env)
 
     with console.status(f"[bold blue]{label}...[/bold blue]") as status:
@@ -205,13 +206,11 @@ def run_terraform(
     label = "Analyzing cloud state" if command == "plan" else "Converging infrastructure"
     cmd = [terraform_bin, command, "-input=false", "-lock=false"] + args
     
-    result = _execute_command(cmd, main_staging, env, label)
+    # Enable streaming for the main operation so user sees Terraform progress
+    result = _execute_command(cmd, main_staging, env, label, stream=True)
     
-    if result.returncode == 0 and not is_debug() and result.stdout:
-        for line in result.stdout.splitlines():
-            if "Plan:" in line or "Apply complete!" in line:
-                console.print(f"[bold green]Summary: {line.strip()}[/bold green]")
-
+    # Removed output summary parsing since we are streaming now
+    
     return result.returncode
 
 @click.command()

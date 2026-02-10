@@ -5,11 +5,21 @@ def map_state_to_status(state_dict: dict) -> ApigeeProjectStatus:
     """
     Maps terraform show -json output to ApigeeProjectStatus.
     """
+    if not state_dict:
+        # Return empty status if state is missing
+        return ApigeeProjectStatus(project_id="UNKNOWN", config=ApigeeOrgConfig(runtime_location="-"))
+
     resources = state_dict.get("resources", [])
     
+    # Helper for safe access
+    def get_first_inst_attr(resource_type):
+        res = next((r for r in resources if r.get("type") == resource_type), {})
+        instances = res.get("instances", [])
+        if not instances: return {}
+        return instances[0].get("attributes", {})
+
     # 1. Find Org
-    org_res = next((r for r in resources if r.get("type") == "google_apigee_organization"), {})
-    org_attrs = org_res.get("instances", [{}])[0].get("attributes", {})
+    org_attrs = get_first_inst_attr("google_apigee_organization")
     
     # 2. Find Instances
     inst_resources = [r for r in resources if r.get("type") == "google_apigee_instance"]
@@ -31,8 +41,9 @@ def map_state_to_status(state_dict: dict) -> ApigeeProjectStatus:
             environments.append(i.get("attributes", {}).get("name"))
 
     # 4. Find SSL Status
-    ssl_res = next((r for r in resources if r.get("type") == "google_compute_managed_ssl_certificate"), {})
-    ssl_status = ssl_res.get("instances", [{}])[0].get("attributes", {}).get("managed", [{}])[0].get("status", "-")
+    ssl_attrs = get_first_inst_attr("google_compute_managed_ssl_certificate")
+    managed_list = ssl_attrs.get("managed", [])
+    ssl_status = managed_list[0].get("status", "-") if managed_list else "-"
 
     # 5. Build Config (Immutable fields)
     tf_consumer_loc = org_attrs.get("api_consumer_data_location")

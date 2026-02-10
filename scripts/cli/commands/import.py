@@ -125,7 +125,12 @@ def import_cmd(ctx, project_id, force, control_plane):
                 console.print(f"[red]  - Import Failed: {result.stderr.strip()}[/red]")
 
         try_import(bootstrap_staging, "google_service_account.deployer", f"projects/{project_id}/serviceAccounts/terraform-deployer@{project_id}.iam.gserviceaccount.com")
-        # Note: Deny policy ID is complex, skipping for brevity or add if needed.
+        
+        # Import Deny Policy (Phase 0)
+        # ID Format: <parent_url_encoded>/<name>
+        # e.g. cloudresourcemanager.googleapis.com%2Fprojects%2Fmy-project/protect-deletes
+        deny_policy_id = f"cloudresourcemanager.googleapis.com%2Fprojects%2F{project_id}/protect-deletes"
+        try_import(bootstrap_staging, "google_iam_deny_policy.protect_deletes[0]", deny_policy_id)
         
         # Phase 0 Apply (Required to get SA email for Phase 1)
         sa_email, changes_made = _run_bootstrap_folder(stager, config)
@@ -145,7 +150,7 @@ def import_cmd(ctx, project_id, force, control_plane):
         subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True, env=env)
         
         # Imports (Phase 1)
-        # Note: Org and Instance use count now, so we must target [0]
+        # Order: Instance -> Org -> Network -> APIs -> Attachments -> Ingress
         org_imported = False
         
         def try_import_with_status(staging_dir, resource_addr, resource_id):
@@ -167,15 +172,62 @@ def import_cmd(ctx, project_id, force, control_plane):
                 console.print(f"[red]  - Import Failed: {result.stderr.strip()}[/red]")
                 return False
 
-        # Order matters! We import Instance first to break circular validation logic.
+        # 1. Base Infra
         try_import_with_status(main_staging, "google_apigee_instance.apigee_instance[0]", f"organizations/{project_id}/instances/{instance_loc}")
-        
         if try_import_with_status(main_staging, "google_apigee_organization.apigee_org[0]", f"organizations/{project_id}"):
             org_imported = True
-            
         try_import_with_status(main_staging, "google_compute_network.apigee_network", f"projects/{project_id}/global/networks/apigee-network")
+        
+        # 2. APIs
+        apis = ["apigee", "compute", "servicenetworking", "cloudkms", "dns", "iam", "serviceusage", "crm", "secretmanager"]
+        for api in apis:
+            # Map logical 'crm' to actual service name
+            service_name = f"{api}.googleapis.com"
+            if api == "crm":
+                service_name = "cloudresourcemanager.googleapis.com"
+            
+            try_import_with_status(main_staging, f"google_project_service.{api}", f"{project_id}/{service_name}")
+
+        # 3. Logical Apigee
         try_import_with_status(main_staging, "google_apigee_environment.apigee_env[\"dev\"]", f"organizations/{project_id}/environments/dev")
         try_import_with_status(main_staging, "google_apigee_envgroup.envgroup[\"eval-group\"]", f"organizations/{project_id}/envgroups/eval-group")
+        
+        # 4. Attachments (Dynamic Discovery)
+        # IDs are UUIDs, so we must query the API.
+        
+        # EnvGroup Attachments
+        # API: organizations/{org}/envgroups/{group}/attachments
+        try:
+            status, resp = api_request("GET", f"organizations/{project_id}/envgroups/eval-group/attachments")
+            if status == 200 and "environmentGroupAttachment" in resp:
+                for att in resp["environmentGroupAttachment"]:
+                    # We assume 1 attachment per env-group pair for now (standard topology)
+                    # Resource ID format: organizations/{org}/envgroups/{group}/attachments/{uuid}
+                    att_id = att.get("name") # This is the UUID
+                    full_id = f"organizations/{project_id}/envgroups/eval-group/attachments/{att_id}"
+                    try_import_with_status(main_staging, "google_apigee_envgroup_attachment.envgroup_attachment[\"eval-group-dev\"]", full_id)
+        except Exception:
+            pass
+
+        # Instance Attachments
+        # API: organizations/{org}/instances/{instance}/attachments
+        try:
+            status, resp = api_request("GET", f"organizations/{project_id}/instances/{instance_loc}/attachments")
+            if status == 200 and "attachments" in resp:
+                for att in resp["attachments"]:
+                    # Resource ID format: organizations/{org}/instances/{instance}/attachments/{name}
+                    att_name = att.get("name")
+                    full_id = f"organizations/{project_id}/instances/{instance_loc}/attachments/{att_name}"
+                    try_import_with_status(main_staging, "google_apigee_instance_attachment.instance_attachment[\"dev\"]", full_id)
+        except Exception:
+            pass
+        
+        # 5. Ingress (Module)
+        try_import_with_status(main_staging, "module.ingress_lb[0].google_compute_global_address.lb_ip", f"projects/{project_id}/global/addresses/apigee-ingress-ip")
+        try_import_with_status(main_staging, "module.ingress_lb[0].google_compute_health_check.lb_health_check", f"projects/{project_id}/global/healthChecks/apigee-ingress-health-check")
+        try_import_with_status(main_staging, "module.ingress_lb[0].google_compute_region_network_endpoint_group.psc_neg", f"projects/{project_id}/regions/{instance_loc}/networkEndpointGroups/apigee-ingress-psc-neg")
+        try_import_with_status(main_staging, "module.ingress_lb[0].google_compute_backend_service.lb_backend", f"projects/{project_id}/global/backendServices/apigee-ingress-backend")
+        try_import_with_status(main_staging, "module.ingress_lb[0].google_compute_url_map.lb_url_map", f"projects/{project_id}/global/urlMaps/apigee-ingress-url-map")
 
         console.print("[green]✓ State Hydrated Successful[/green]")
         
