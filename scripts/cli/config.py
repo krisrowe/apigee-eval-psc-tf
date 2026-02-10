@@ -1,11 +1,15 @@
 import os
 import sys
+import logging
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
 import hcl2
 from scripts.cli.config_sdk import get_config_manager
+
+logger = logging.getLogger(__name__)
+
 try:
     import tomllib
 except ImportError:
@@ -43,6 +47,7 @@ class ConfigLoader:
 
     @classmethod
     def load(cls, working_dir: Path, optional: bool = False) -> Config:
+        logger.debug(f"Loading config from: {working_dir}")
         # Enforce policy: apigee.tfvars is forbidden
         legacy_file = working_dir / "apigee.tfvars"
         if legacy_file.exists():
@@ -51,8 +56,10 @@ class ConfigLoader:
         hcl_path = None
         for filename in cls.CONFIG_FILES:
             candidate = working_dir / filename
+            logger.debug(f"  Probing: {candidate}")
             if candidate.exists():
                 hcl_path = candidate
+                logger.debug(f"  Found: {hcl_path}")
                 break
         
         data = {}
@@ -63,6 +70,7 @@ class ConfigLoader:
             except Exception as e:
                 raise ValueError(f"Failed to parse {hcl_path.name}: {e}")
         elif not optional:
+            logger.debug("  No config file found.")
             raise FileNotFoundError(f"Configuration file not found. Expected: {', '.join(cls.CONFIG_FILES)}")
 
         # Use the centralized ConfigManager for global settings
@@ -132,9 +140,13 @@ class ConfigLoader:
         """Looks for config file (HCL) in CWD and parents."""
         cwd = Path.cwd()
         current = cwd
+        logger.debug(f"Searching for workspace root from: {cwd}")
         while True:
             for filename in cls.CONFIG_FILES:
-                if (current / filename).exists():
+                candidate = current / filename
+                logger.debug(f"  Checking: {candidate}")
+                if candidate.exists():
+                    logger.debug(f"  Root found: {current}")
                     return current
             
             if current.parent == current:  # Reached root

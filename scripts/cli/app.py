@@ -1,9 +1,22 @@
 import click
 import sys
+import os
+import logging
 from pathlib import Path
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.prompt import Prompt
 from scripts.cli.config import ConfigLoader
+
+# Setup Logging
+log_level = os.environ.get("LOG_LEVEL", "WARNING").upper()
+logging.basicConfig(
+    level=log_level,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, markup=True)]
+)
+logger = logging.getLogger("apim")
 
 console = Console()
 

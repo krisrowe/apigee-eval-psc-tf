@@ -4,6 +4,7 @@ import subprocess
 import os
 import json
 import time
+import logging
 from pathlib import Path
 from rich.console import Console
 from scripts.cli.config import ConfigLoader
@@ -12,6 +13,7 @@ from scripts.cli.schemas import ApigeeOrgConfig
 from scripts.cli.commands.core import _run_bootstrap_folder, wait_for_impersonation
 from scripts.cli.core import api_request
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 @click.command(name="import")
@@ -29,10 +31,13 @@ def import_cmd(ctx, project_id, force, control_plane):
     cwd = Path.cwd()
     tfvars_path = cwd / "terraform.tfvars"
     
+    logger.debug(f"Adoption startup. CWD: {cwd}")
+    
     # 0. Resolve Project ID
     if not project_id:
+        logger.debug("No Project ID provided. Probing local environment...")
         try:
-            # Attempt to load from existing config
+            # Attempt to load from existing config using shared logic
             config = ConfigLoader.load(cwd, optional=True)
             if config:
                 if config.project.gcp_project_id:
@@ -43,8 +48,8 @@ def import_cmd(ctx, project_id, force, control_plane):
                 if not control_plane and config.apigee.control_plane_location:
                     control_plane = config.apigee.control_plane_location
                     console.print(f"[dim]Using control_plane from terraform.tfvars: {control_plane}[/dim]")
-        except Exception:
-            pass # Ignore loading errors, fall through to check args
+        except Exception as e:
+            logger.debug(f"ConfigLoader failed during probe: {e}")
         
         if not project_id:
             console.print("[red]Error: Missing PROJECT_ID argument and could not find it in terraform.tfvars[/red]")
@@ -58,12 +63,12 @@ def import_cmd(ctx, project_id, force, control_plane):
     instance_loc = "us-central1"
     try:
         # Note: If this is DRZ, discovery via Global API might fail or return partial data.
-        # Ideally we should use the control_plane to hit the right API, but api_request is simplistic.
         status, inst_resp = api_request("GET", f"organizations/{project_id}/instances")
         if status == 200 and "instances" in inst_resp and len(inst_resp["instances"]) > 0:
             instance_loc = inst_resp["instances"][0].get("location", instance_loc)
-    except:
-        pass
+            logger.debug(f"Discovered instance location: {instance_loc}")
+    except Exception as e:
+        logger.debug(f"Discovery API failed: {e}")
 
     # 2. Write Config
     try:
@@ -91,7 +96,6 @@ def import_cmd(ctx, project_id, force, control_plane):
         env["GOOGLE_CLOUD_QUOTA_PROJECT"] = project_id
         
         # We inject dummy variables to satisfy Terraform parser during import
-        # We must include control_plane_location so the Provider connects to the right endpoint.
         dummy_vars = {
             "apigee_billing_type": "EVALUATION",
             "apigee_runtime_location": "us-central1",
@@ -120,15 +124,11 @@ def import_cmd(ctx, project_id, force, control_plane):
             elif "Cannot import non-existent remote object" in result.stderr:
                 console.print(f"[dim]  . Skipped (Not found in cloud): {resource_addr}[/dim]")
             else:
-                # We don't error out because maybe the resource genuinely doesn't exist
-                # But we debug log it
                 console.print(f"[red]  - Import Failed: {result.stderr.strip()}[/red]")
 
         try_import(bootstrap_staging, "google_service_account.deployer", f"projects/{project_id}/serviceAccounts/terraform-deployer@{project_id}.iam.gserviceaccount.com")
         
         # Import Deny Policy (Phase 0)
-        # ID Format: <parent_url_encoded>/<name>
-        # e.g. cloudresourcemanager.googleapis.com%2Fprojects%2Fmy-project/protect-deletes
         deny_policy_id = f"cloudresourcemanager.googleapis.com%2Fprojects%2F{project_id}/protect-deletes"
         try_import(bootstrap_staging, "google_iam_deny_policy.protect_deletes[0]", deny_policy_id)
         
@@ -181,11 +181,8 @@ def import_cmd(ctx, project_id, force, control_plane):
         # 2. APIs
         apis = ["apigee", "compute", "servicenetworking", "cloudkms", "dns", "iam", "serviceusage", "crm", "secretmanager"]
         for api in apis:
-            # Map logical 'crm' to actual service name
             service_name = f"{api}.googleapis.com"
-            if api == "crm":
-                service_name = "cloudresourcemanager.googleapis.com"
-            
+            if api == "crm": service_name = "cloudresourcemanager.googleapis.com"
             try_import_with_status(main_staging, f"google_project_service.{api}", f"{project_id}/{service_name}")
 
         # 3. Logical Apigee
@@ -193,34 +190,32 @@ def import_cmd(ctx, project_id, force, control_plane):
         try_import_with_status(main_staging, "google_apigee_envgroup.envgroup[\"eval-group\"]", f"organizations/{project_id}/envgroups/eval-group")
         
         # 4. Attachments (Dynamic Discovery)
-        # IDs are UUIDs, so we must query the API.
-        
         # EnvGroup Attachments
-        # API: organizations/{org}/envgroups/{group}/attachments
         try:
             status, resp = api_request("GET", f"organizations/{project_id}/envgroups/eval-group/attachments")
-            if status == 200 and "environmentGroupAttachment" in resp:
-                for att in resp["environmentGroupAttachment"]:
-                    # We assume 1 attachment per env-group pair for now (standard topology)
-                    # Resource ID format: organizations/{org}/envgroups/{group}/attachments/{uuid}
-                    att_id = att.get("name") # This is the UUID
-                    full_id = f"organizations/{project_id}/envgroups/eval-group/attachments/{att_id}"
-                    try_import_with_status(main_staging, "google_apigee_envgroup_attachment.envgroup_attachment[\"eval-group-dev\"]", full_id)
-        except Exception:
-            pass
+            logger.debug(f"EnvGroup Attachment discovery response: {resp}")
+            if status == 200:
+                # Handle plural or singular keys
+                attachments = resp.get("environmentGroupAttachments") or resp.get("environmentGroupAttachment")
+                if attachments:
+                    for att in attachments:
+                        att_id = att.get("name")
+                        full_id = f"organizations/{project_id}/envgroups/eval-group/attachments/{att_id}"
+                        logger.debug(f"Attempting import with ID: {full_id}")
+                        try_import_with_status(main_staging, "google_apigee_envgroup_attachment.envgroup_attachment[\"eval-group-dev\"]", full_id)
+        except Exception as e:
+            logger.debug(f"EnvGroup Attachment discovery failed: {e}")
 
         # Instance Attachments
-        # API: organizations/{org}/instances/{instance}/attachments
         try:
             status, resp = api_request("GET", f"organizations/{project_id}/instances/{instance_loc}/attachments")
             if status == 200 and "attachments" in resp:
                 for att in resp["attachments"]:
-                    # Resource ID format: organizations/{org}/instances/{instance}/attachments/{name}
                     att_name = att.get("name")
                     full_id = f"organizations/{project_id}/instances/{instance_loc}/attachments/{att_name}"
+                    logger.debug(f"Attempting import with ID: {full_id}")
                     try_import_with_status(main_staging, "google_apigee_instance_attachment.instance_attachment[\"dev\"]", full_id)
-        except Exception:
-            pass
+        except Exception: pass
         
         # 5. Ingress (Module)
         try_import_with_status(main_staging, "module.ingress_lb[0].google_compute_global_address.lb_ip", f"projects/{project_id}/global/addresses/apigee-ingress-ip")
