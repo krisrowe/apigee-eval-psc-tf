@@ -6,8 +6,10 @@ This repository provides a production-grade Terraform framework for deploying Ap
 
 ```bash
 make install
+
+# See available commands and options
+apim
 ```
-This installs the `apim` CLI tool to your system path. After installation, simply run `apim` to see available commands and options.
 
 ---
 
