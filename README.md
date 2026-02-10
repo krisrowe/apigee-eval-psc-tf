@@ -152,5 +152,11 @@ For regions requiring Data Residency (e.g. Canada, Europe), use a specific templ
 
 ---
 
+## Known Issues
+*   **Concurrency:** The CLI disables Terraform state locking (`-lock=false`) to ensure a smooth local experience. Avoid running multiple convergence operations against the same project simultaneously.
+*   **Standard Naming:** Adoption discovery (`apim import`) assumes standard environment (`dev`) and group (`eval-group`) names. Projects with custom naming may require manual `terraform import` for some resources.
+
+---
+
 ## See Also
 - [CONTRIBUTING.md](CONTRIBUTING.md) for design principles and the **"No Ad-hoc gcloud"** rule.
