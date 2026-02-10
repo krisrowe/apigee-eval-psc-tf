@@ -17,7 +17,10 @@ Before using `apim`, ensure you have a Google Cloud Project with billing enabled
 
 1.  **Authenticate:**
     ```bash
+    # Authenticates the gcloud CLI (used by the apim wrapper for API checks)
     gcloud auth login
+
+    # Authenticates Terraform (the underlying engine)
     gcloud auth application-default login
     ```
     *Requirement:* You currently need **Organization Admin** or **Billing Admin** privileges to create new projects and link billing.
