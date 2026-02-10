@@ -49,10 +49,12 @@ Before using `apim`, ensure you have a Google Cloud Project with billing enabled
 ### 🟢 Scenario 1: New Project (Greenfield)
 You have a fresh GCP project and want to deploy Apigee.
 
-1.  **Configure Project:** Create a `terraform.tfvars` file in your working directory.
-    ```hcl
-    gcp_project_id = "my-project-id"
+1.  **Configure Project:**
+    Initialize the local directory with your Google Cloud Project ID:
+    ```bash
+    apim init my-project-id
     ```
+    *(This creates/updates `terraform.tfvars` automatically)*
 
 2.  **Define Template:** Create a `template.json` to define your desired Apigee state.
     ```json
@@ -88,6 +90,13 @@ You have an existing Apigee installation and want to manage it with this tool.
 ---
 
 ## CLI Reference
+
+### `apim init [PROJECT_ID]`
+Initializes the current directory for Apigee-TF by creating or updating `terraform.tfvars`.
+
+| Flag | Description |
+|---|---|
+| `--force` | Overwrite the project ID if it is already set in the config file. |
 
 ### `apim apply [TEMPLATE]`
 Provisions or updates infrastructure. If a template is provided, it enforces that state. If not, it extracts configuration from the existing state.
