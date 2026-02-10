@@ -20,7 +20,7 @@ def test_apply_with_template_no_state_empty_cloud_bootstrap_only(ephemeral_proje
         (Path(tmp_path) / "terraform.tfvars").write_text(f'gcp_project_id = "{ephemeral_project}"')
         result = runner.invoke(cli, ["apply", "us-central1", "--bootstrap-only"])
         assert result.exit_code == 0
-        assert "✓ Bootstrap complete" in result.output
+        assert "Bootstrap only requested" in result.output
 
 @pytest.mark.integration
 def test_apply_with_template_no_state_empty_cloud_mocked_org(ephemeral_project, tmp_path):
@@ -48,8 +48,7 @@ def test_apply_with_template_no_state_empty_cloud_mocked_org(ephemeral_project, 
             result = runner.invoke(cli, ["apply", "us-central1", "--auto-approve"])
             
             assert result.exit_code == 0
-            assert "✓ Bootstrap complete" in result.output
-            assert "Convergence Complete" in result.output
+            assert "✓ System Converged" in result.output
 
 @pytest.mark.integration
 def test_apply_with_template_no_state_partial_cloud_mock_collision(ephemeral_project, tmp_path):
@@ -65,10 +64,10 @@ def test_apply_with_template_no_state_partial_cloud_mock_collision(ephemeral_pro
         # Intercept Phase 1 and simulate Collision
         if "1-main" in cwd:
             msg = "Error: google_compute_network.apigee_network already exists"
-            print(msg) 
             mock_res = MagicMock()
             mock_res.returncode = 1
             mock_res.stdout = msg
+            mock_res.stderr = msg
             return mock_res
         return real_sub(cmd, **kwargs)
 
@@ -98,8 +97,7 @@ def test_apply_with_template_no_state_empty_cloud_skip_apigee(ephemeral_project,
             print(result.output)
             
         assert result.exit_code == 0
-        assert "✓ Bootstrap complete" in result.output
-        assert "✓ Convergence Complete" in result.output
+        assert "✓ System Converged" in result.output
 
 @pytest.mark.integration
 def test_apply_with_template_no_state_existing_cloud_org(existing_org_project_id, tmp_path):
