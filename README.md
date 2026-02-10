@@ -1,6 +1,18 @@
 # Apigee Terraform Provisioning
 
-This repository provides a production-grade Terraform framework for deploying Apigee X/Hybrid on Google Cloud. It focuses on **State Convergence** rather than simple scripts, ensuring your infrastructure always matches your intent.
+This repository provides a specialized Terraform framework for deploying **Apigee X** on Google Cloud. It focuses on **State Convergence** rather than simple scripts, ensuring your infrastructure always matches your intent.
+
+It is designed as a **Rapid Starter** for managing quick installations and repairing reference implementations. It captures the idiosyncrasies of managing Apigee with Terraform, navigating complex patterns such as:
+*   **Data Residency (DRZ):** Handling regional control planes and consumer data location.
+*   **Networking:** Configuring Northbound (Ingress/PSC) and Southbound (VPC Peering/PSA) connectivity.
+*   **Custom Domains:** Aligning public ingress with Apigee Environment Groups.
+*   **Safety:** Preventing accidental deletion of immutable "pet" infrastructure (Organization, Instance) via state protection.
+
+One beauty of this framework is that, unlike raw Terraform, it allows you to **recover and manage an existing installation** through custom `tf import` logic. This makes local state files "less precious" and casual environment management significantly less complex and demanding.
+
+Furthermore, the architecture allows for **seamless extension via additional .tf modules** for specific scenarios (e.g., AI Gateway). This enables configuring the various GCP resources that Apigee integrates with for those use cases without having to duplicate the core Apigee configuration itself.
+
+This framework serves as a solid foundation for broader, enterprise-grade implementations that can be extended to multiple regions and complex topologies.
 
 ## Installation
 
