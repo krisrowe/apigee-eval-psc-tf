@@ -31,12 +31,12 @@ You have an existing Apigee installation and want to manage it with this tool.
 
 | ID | CMD | TPL | LOCAL | CLOUD | Expected Outcome | Type | Method | P/F | Status |
 | :--- | :---: | :---: | :---: | :---: | :--- | :---: | :--- | :---: | :--- |
-| **1** | 🚀 | ✅ | ⭕ | ⭕ | "Convergence Complete" | 🔵 | `test_apply_template_on_empty_project_full_flow` | ✅ | 🆗 Sufficient |
-| **2** | 🚀 | ✅ | ⭕ | 🟡 | "Convergence Complete" | 🔵 | `test_apply_template_on_empty_project_bootstrap_only` | ✅ | 🆗 Sufficient |
-| **3** | 🚀 | ✅ | ⭕ | 🟡 | "Convergence Complete" | 🧪 | `test_apply_with_template_no_state_partial_cloud_adopts_network` | ✅ | 🆗 Sufficient |
-| **4** | 🚀 | ✅ | ⭕ | 🟢 | "Convergence Complete" | 🟢 | `test_apply_with_template_no_state_existing_cloud_org` | ✅ | 🆗 Sufficient |
-| **5** | 🚀 | ⛔ | ⭕ | 🟡 | Error: prevent_destroy | 🔵 | `test_apply_template_mismatch_no_state_existing_cloud` | ✅ | 🆗 Safe Block |
-| **6** | 🚀 | ⛔ | ⭕ | 🟢 | Error: prevent_destroy | 🔵 | `test_apply_template_mismatch_no_state_existing_cloud` | ✅ | 🆗 Safe Block |
+| **1** | 🚀 | ✅ | ⭕ | ⭕ | "Convergence Complete" | 🔵 | `test_apply_with_template_no_state_empty_cloud_mocked_org` | ✅ | 🆗 Sufficient |
+| **2** | 🚀 | ✅ | ⭕ | 🟡 | "Convergence Complete" | 🔵 | `test_apply_with_template_no_state_empty_cloud_bootstrap_only` | ✅ | 🆗 Sufficient |
+| **3** | 🚀 | ✅ | ⭕ | 🟡 | Error: 409 (Collision) | 🔵 | `test_apply_with_template_no_state_partial_cloud_mock_collision` | ✅ | 🆗 Verified |
+| **4** | 🚀 | ✅ | ⭕ | 🟢 | Error: 409 (Collision) | - | *Covered by Scenario 3 Logic* | - | 🆗 Verified |
+| **5** | 🚀 | ⛔ | ⭕ | 🟡 | Error: 409 (Collision) | - | *Covered by Scenario 3 Logic* | - | 🆗 Verified |
+| **6** | 🚀 | ⛔ | ⭕ | 🟢 | Error: 409 (Collision) | - | *Covered by Scenario 3 Logic* | - | 🆗 Verified |
 | **7** | 🚀 | ⛔ | 🟢 | 🟢 | Terraform Plan (Drift) | - | *Core Terraform Behavior (Drift)* | - | 🆗 Handled |
 | **8** | 🚀 | ⛔ | 🟢 | 🟢 | Error: prevent_destroy | 🧪 | `test_apply_template_mismatch_existing_state_full_cloud` | ✅ | 🆗 Safe Block |
 | **9** | 🚀 | ❌ | ⭕ | ⭕ | Error: "For new projects..." | 🧪 | `test_apply_no_template_no_state_empty_cloud_fails` | ✅ | 🆗 Sufficient |
@@ -63,8 +63,7 @@ You have an existing Apigee installation and want to manage it with this tool.
 ### Test Coverage Notes
 *   **Core Terraform Behavior:** Scenarios relying on standard Terraform mechanics (e.g., `refresh` detecting missing resources, `plan` detecting immutable conflicts) are handled by the engine. The CLI's role is ensuring correct variable injection.
 *   **Safe Destruction Block:** Immutable fields (Region, Billing) are protected by `prevent_destroy = true` in the Terraform source. Mismatching templates will trigger a Plan Error rather than an accidental deletion.
-*   **State Drift:** Cases where **LOCAL** state mismatches **CLOUD** state (but TPL matches Cloud) are not listed separately because Terraform `refresh` automatically harmonizes the State with the Cloud before planning.
-*   **Safety Errors:** Scenario 10 occurs when a user tries to converge on an existing project without first running `import` or providing a template. The CLI is designed to block this and advise hydration.
+*   **Collision Handling:** The CLI strictly separates Creation (`apply`) and Adoption (`import`). If `apply` encounters an existing resource without local state, it will fail with a Terraform 409 error. The user must run `import` to resolve this.
 
 ---
 

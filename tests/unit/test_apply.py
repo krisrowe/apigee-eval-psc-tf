@@ -68,10 +68,11 @@ def test_apply_no_template_no_state_empty_cloud_fails(mock_stager, mock_config_l
 
 # --- Adoption Scenarios ---
 
-def test_apply_with_template_no_state_partial_cloud_adopts_network(mock_stager, mock_config_loader, tmp_path):
+def test_apply_with_template_no_state_partial_cloud_direct_apply(mock_stager, mock_config_loader, tmp_path):
     """
     Scenario 3: apply [TPL] + No State + Existing Network.
-    Verifies that the CLI attempts to IMPORT the network.
+    Verifies that the CLI DOES NOT attempt adoption (Magic removed).
+    It proceeds directly to 'apply'.
     """
     with patch("scripts.cli.commands.core.subprocess.run") as mock_sub, \
          patch("scripts.cli.commands.core.shutil.which") as mock_which, \
@@ -82,7 +83,7 @@ def test_apply_with_template_no_state_partial_cloud_adopts_network(mock_stager, 
         def side_effect(cmd, **kwargs):
             mock_res = MagicMock()
             mock_res.returncode = 0
-            if "state list" in " ".join(cmd): mock_res.stdout = "" # Missing from state
+            if "state list" in " ".join(cmd): mock_res.stdout = "" 
             else: mock_res.stdout = "Success"
             return mock_res
         mock_sub.side_effect = side_effect
@@ -94,9 +95,13 @@ def test_apply_with_template_no_state_partial_cloud_adopts_network(mock_stager, 
             result = runner.invoke(cli, ["apply", "t.json"])
             
             assert result.exit_code == 0
-            # Verify network import attempt
+            # Verify NO import attempt
             import_calls = [call[0][0] for call in mock_sub.call_args_list if "import" in call[0][0]]
-            assert any("google_compute_network.apigee_network" in cmd for cmd in import_calls)
+            assert len(import_calls) == 0, "CLI should not attempt adoption!"
+            
+            # Verify it went to apply
+            apply_calls = [call[0][0] for call in mock_sub.call_args_list if "apply" in call[0][0]]
+            assert len(apply_calls) > 0, "CLI should have proceeded to apply"
 
 # --- Mismatch Scenarios ---
 

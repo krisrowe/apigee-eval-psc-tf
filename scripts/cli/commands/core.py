@@ -12,28 +12,6 @@ from scripts.cli.schemas import ApigeeOrgConfig
 
 console = Console()
 
-def _adopt_main_resources(project_id: str, terraform_bin: str, cwd: Path, env: dict):
-    """
-    Blind adoption of critical resources.
-    """
-    def try_import(resource_addr, resource_id):
-        # 1. Check state
-        state_check = subprocess.run(
-            [terraform_bin, "state", "list", resource_addr],
-            cwd=cwd, capture_output=True, text=True, env=env
-        )
-        if resource_addr in state_check.stdout:
-            return
-
-        # 2. Attempt Import
-        subprocess.run(
-            [terraform_bin, "import", "-input=false", "-lock=false", resource_addr, resource_id],
-            cwd=cwd, capture_output=True, env=env
-        )
-
-    try_import("google_apigee_organization.apigee_org", f"organizations/{project_id}")
-    try_import("google_compute_network.apigee_network", f"projects/{project_id}/global/networks/apigee-network")
-
 def _run_bootstrap_folder(stager: TerraformStager, config, deletes_allowed: bool = False, fake_secret: bool = False) -> Optional[str]:
     """
     Run 0-bootstrap folder.
@@ -228,9 +206,6 @@ def run_terraform(
     # Init
     subprocess.run([terraform_bin, "init", "-input=false"], cwd=main_staging, check=True, env=env)
     
-    # 2.5 Smart Adoption: Always try to import Org/Network before final apply
-    _adopt_main_resources(config.project.gcp_project_id, terraform_bin, main_staging, env)
-
     # 3. Final Execution
     cmd = [terraform_bin, command, "-input=false", "-lock=false"] + args
     result = subprocess.run(cmd, cwd=main_staging, env=env)
