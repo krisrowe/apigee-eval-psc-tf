@@ -42,7 +42,7 @@ You have an existing Apigee installation and want to manage it with this tool.
 | **9** | 🚀 | ❌ | ⭕ | ⭕ | Error: "For new projects..." | 🧪 | `test_apply_no_template_no_state_empty_cloud_fails` | ✅ | 🆗 Sufficient |
 | **10**| 🚀 | ❌ | ⭕ | 🟢 | Error: "For existing... import" | 🧪 | *Covered by Scenario 9 Logic* | ✅ | 🆗 Sufficient |
 | **11**| 🚀 | ❌ | 🟢 | ⭕ | Terraform Plan (Recreate) | - | *Core Terraform Behavior (Refresh)* | - | 🆗 Handled |
-| **12**| 🚀 | ❌ | 🟢 | 🟢 | "Convergence Complete" | 🟢 | `test_deny_deletes_enforcement` | ✅ | 🆗 Sufficient |
+| **12**| 🚀 | ❌ | 🟢 | 🟢 | "Convergence Complete" | 🟢 | `test_deny_deletes_enforcement` | ✅ | 🆗 Verified |
 | **13**| 🔍 | ❌ | ⭕ | ⭕ | Error: "Not found in cloud" | 🧪 | `test_import_no_state_partial_cloud_resilient` | ✅ | 🆗 Verified |
 | **14**| 🔍 | ❌ | ⭕ | 🟢 | "State Hydrated Successful" | 🧪 | `test_import_no_state_existing_cloud_success` | ✅ | ⚠️ Needs Integ |
 | **15**| 🔍 | ❌ | 🟢 | 🟢 | "State Hydrated Successful" | - | *Idempotency Check* | - | 🆗 Handled |
