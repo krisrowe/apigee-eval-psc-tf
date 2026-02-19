@@ -22,6 +22,13 @@ resource "google_dns_managed_zone" "apigee_zone" {
   dns_name    = "${join(".", slice(split(".", var.hostname), 1, length(split(".", var.hostname))))}."
   description = "Managed zone for Apigee hostnames"
   visibility  = "public"
+
+  # Prevent accidental destruction of the DNS zone.
+  # Recreating the zone rotates the assigned Google nameservers (e.g. from ns-cloud-a1 to ns-cloud-b1),
+  # breaking the delegation at the external registrar (e.g. Squarespace/GoDaddy).
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Create A record
