@@ -6,15 +6,12 @@ import hcl2
 
 console = Console()
 
-@click.group(invoke_without_command=True)
-@click.pass_context
-def project(ctx):
+@click.group()
+def project():
     """
     Manage the active Google Cloud Project context.
-    If no subcommand is provided, behaves like 'get'.
     """
-    if ctx.invoked_subcommand is None:
-        ctx.invoke(project_get)
+    pass
 
 @project.command(name="get")
 def project_get():

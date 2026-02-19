@@ -20,7 +20,7 @@ def status_cmd(ctx, refresh):
         project_id = None
             
     if not project_id:
-        console.print("[red]Error: No project ID found. Run 'apim create' or 'apim import' first.[/red]")
+        console.print("[red]Error: No project ID found. Run 'apim project set <project-id>' or 'apim import <project-id>' first.[/red]")
         ctx.exit(1)
 
     if refresh:
@@ -33,8 +33,19 @@ def status_cmd(ctx, refresh):
     status = provider.get_status(project_id)
     
     if not status:
-        console.print(f"[red]Error: Could not retrieve status for {project_id}. (State missing?)[/red]")
-        ctx.exit(1)
+        from scripts.cli.paths import get_state_path
+        state_path = get_state_path(project_id, phase="1-main")
+        
+        console.print(f"\n[bold underline]PROJECT CONTEXT: {project_id}[/bold underline]")
+        if state_path.exists():
+            console.print(f"[yellow]Status unavailable, but local state found at: {state_path}[/yellow]")
+            console.print("Try running [bold]apim show[/bold] to inspect resources or [bold]apim apply[/bold] to refresh.")
+        else:
+            console.print("[yellow]No local state found for this project.[/yellow]")
+            console.print(f"Recommended Next Steps:")
+            console.print(f"  1. [bold]apim import[/bold] - Adopt existing resources (Recommended for brownfield).")
+            console.print(f"  2. [bold]apim apply[/bold]  - Provision new infrastructure (Greenfield).")
+        return
 
     console.print(f"\n[bold underline]ENVIRONMENT STATUS: {project_id}[/bold underline]")
     

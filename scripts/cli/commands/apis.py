@@ -93,7 +93,8 @@ def apis():
 @apis.command("deploy")
 @click.argument("proxy_name")
 @click.option("--env", "-e", default="dev", help="Target environment (default: dev)")
-def deploy_command(proxy_name: str, env: str):
+@click.option("--service-account", "-sa", help="Google Service Account to use for proxy identity.")
+def deploy_command(proxy_name: str, env: str, service_account: str):
     """Deploy an API proxy to an environment."""
     try:
         config = ConfigLoader.load(Path.cwd())
@@ -121,7 +122,7 @@ def deploy_command(proxy_name: str, env: str):
     
     # Deploy
     console.print(f"[bold]Deploying to '{env}'...[/bold]")
-    success = deploy_proxy(config, proxy_name, revision, env)
+    success = deploy_proxy(config, proxy_name, revision, env, service_account)
     
     if success:
         hostname = get_hostname_from_config(config)
@@ -261,7 +262,7 @@ def import_proxy(config, proxy_name: str, bundle_path: Path) -> Optional[str]:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def deploy_proxy(config, proxy_name: str, revision: str, environment: str) -> bool:
+def deploy_proxy(config, proxy_name: str, revision: str, environment: str, service_account: Optional[str] = None) -> bool:
     """Deploy a proxy revision to an environment."""
     project_id = config.project.gcp_project_id
     control_plane = config.apigee.control_plane_location
@@ -271,7 +272,9 @@ def deploy_proxy(config, proxy_name: str, revision: str, environment: str) -> bo
     else:
         api_base = "https://apigee.googleapis.com/v1"
     
-    url = f"{api_base}/organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments"
+    url = f"{api_base}/organizations/{project_id}/environments/{environment}/apis/{proxy_name}/revisions/{revision}/deployments?override=true"
+    if service_account:
+        url += f"&serviceAccount={service_account}"
     
     token_result = subprocess.run(
         ["gcloud", "auth", "print-access-token"],

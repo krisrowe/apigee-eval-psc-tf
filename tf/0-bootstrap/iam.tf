@@ -38,11 +38,17 @@ resource "google_service_account_iam_member" "token_creator" {
 }
 
 # --- PROJECT ACCESS ---
-# Grant Editor directly to the Service Account.
-# This avoids the complexity of managing a global Admin Group in shared environments.
-resource "google_project_iam_member" "deployer_editor" {
+# Grant roles directly to the Service Account.
+# We grant Editor for general resource management, and IAM Admin roles 
+# to allow the SA to manage runtime identities and service permissions in Phase 1.
+resource "google_project_iam_member" "deployer_roles" {
+  for_each = toset([
+    "roles/editor",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/iam.serviceAccountAdmin"
+  ])
   project = var.gcp_project_id
-  role    = "roles/editor"
+  role    = each.key
   member  = "serviceAccount:${google_service_account.deployer.email}"
 }
 

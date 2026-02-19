@@ -198,6 +198,22 @@ module "dns" {
 
 
 
+# --- RUNTIME IDENTITY ---
+# Service Account for Apigee Proxies to use (GoogleAuthentication)
+resource "google_service_account" "apigee_runtime" {
+  account_id   = "apigee-runtime"
+  display_name = "Apigee Proxy Runtime Identity"
+}
+
+# Allow Apigee Service Agent to impersonate this SA
+resource "google_service_account_iam_member" "apigee_impersonation" {
+  service_account_id = google_service_account.apigee_runtime.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-apigee.iam.gserviceaccount.com"
+  
+  depends_on = [google_apigee_organization.apigee_org]
+}
+
 # --- API Proxy Deployment ---
 # API proxies are managed via the CLI, not Terraform.
 # Use: ./util apis import <project> --proxy-name <name> --bundle <path>

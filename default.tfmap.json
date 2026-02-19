@@ -1,0 +1,86 @@
+[
+  {
+    "addr": "google_service_account.deployer",
+    "id": "projects/{project_id}/serviceAccounts/terraform-deployer@{project_id}.iam.gserviceaccount.com"
+  },
+  {
+    "addr": "google_iam_deny_policy.protect_deletes[0]",
+    "id": "cloudresourcemanager.googleapis.com%2Fprojects%2F{project_id}/protect-deletes"
+  },
+  {
+    "addr": "google_apigee_instance.apigee_instance[0]",
+    "id": "organizations/{project_id}/instances/{instance_loc}"
+  },
+  {
+    "addr": "google_apigee_organization.apigee_org[0]",
+    "id": "organizations/{project_id}"
+  },
+  {
+    "addr": "google_compute_network.apigee_network",
+    "id": "projects/{project_id}/global/networks/apigee-network"
+  },
+  {
+    "addr": "google_project_service.apigee",
+    "id": "{project_id}/apigee.googleapis.com"
+  },
+  {
+    "addr": "google_project_service.compute",
+    "id": "{project_id}/compute.googleapis.com"
+  },
+  {
+    "addr": "google_project_service.servicenetworking",
+    "id": "{project_id}/servicenetworking.googleapis.com"
+  },
+  {
+    "addr": "google_project_service.cloudkms",
+    "id": "{project_id}/cloudkms.googleapis.com"
+  },
+  {
+    "addr": "google_project_service.dns",
+    "id": "{project_id}/dns.googleapis.com"
+  },
+  {
+    "addr": "google_project_service.iam",
+    "id": "{project_id}/iam.googleapis.com"
+  },
+  {
+    "addr": "google_project_service.serviceusage",
+    "id": "{project_id}/serviceusage.googleapis.com"
+  },
+  {
+    "addr": "google_project_service.crm",
+    "id": "{project_id}/cloudresourcemanager.googleapis.com"
+  },
+  {
+    "addr": "google_project_service.secretmanager",
+    "id": "{project_id}/secretmanager.googleapis.com"
+  },
+  {
+    "addr": "google_apigee_environment.apigee_env[\"dev\"]",
+    "id": "organizations/{project_id}/environments/dev"
+  },
+  {
+    "addr": "google_apigee_envgroup.envgroup[\"eval-group\"]",
+    "id": "organizations/{project_id}/envgroups/eval-group"
+  },
+  {
+    "addr": "module.ingress_lb[0].google_compute_global_address.lb_ip",
+    "id": "projects/{project_id}/global/addresses/apigee-ingress-ip"
+  },
+  {
+    "addr": "module.ingress_lb[0].google_compute_health_check.lb_health_check",
+    "id": "projects/{project_id}/global/healthChecks/apigee-ingress-health-check"
+  },
+  {
+    "addr": "module.ingress_lb[0].google_compute_region_network_endpoint_group.psc_neg",
+    "id": "projects/{project_id}/regions/{instance_loc}/networkEndpointGroups/apigee-ingress-psc-neg"
+  },
+  {
+    "addr": "module.ingress_lb[0].google_compute_backend_service.lb_backend",
+    "id": "projects/{project_id}/global/backendServices/apigee-ingress-backend"
+  },
+  {
+    "addr": "module.ingress_lb[0].google_compute_url_map.lb_url_map",
+    "id": "projects/{project_id}/global/urlMaps/apigee-ingress-url-map"
+  }
+]
