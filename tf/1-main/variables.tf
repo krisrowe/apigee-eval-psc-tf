@@ -9,6 +9,18 @@ variable "apigee_enabled" {
   default     = true
 }
 
+variable "enable_vpc_peering" {
+  description = "Enable VPC Peering and allocate peering IP ranges for the Apigee Org setup."
+  type        = bool
+  default     = false
+}
+
+variable "enable_vpc_sc_egress_blocking" {
+  description = "If VPC Peering is enabled, execute the gcloud command to block internet egress routes (0.0.0.0/0) from the Apigee runtime."
+  type        = bool
+  default     = false
+}
+
 variable "domain_name" {
   description = "The domain name for the Apigee Ingress Load Balancer."
   type        = string
@@ -43,6 +55,16 @@ variable "consumer_data_region" {
   description = "The consumer data region for DRZ."
   type        = string
   default     = ""
+}
+
+variable "apigee_environments" {
+  description = "Map of Apigee environments to create. Key is the environment name, value is an object containing configuration like 'type' (e.g. COMPREHENSIVE or BASE)."
+  type = map(object({
+    type = optional(string, null)
+  }))
+  default = {
+    "dev" = {}
+  }
 }
 
 variable "apigee_billing_type" {

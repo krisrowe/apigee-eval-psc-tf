@@ -11,7 +11,7 @@ console = Console()
 @click.option("--raw", is_flag=True, help="Show raw .tfvars content.")
 @click.pass_context
 def show_cmd(ctx, raw):
-    """Show configuration and resource status for the local project."""
+    """Show configuration and status for the current Apigee Deployment Workspace."""
     # 1. Resolve Local Paths
     var_file, state_file = get_project_paths()
     

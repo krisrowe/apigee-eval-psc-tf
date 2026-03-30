@@ -2,6 +2,9 @@
 
 This repository provides a specialized Terraform framework for deploying **Apigee X** on Google Cloud. It focuses on **State Convergence** rather than simple scripts, ensuring your infrastructure always matches your intent.
 
+### The Apigee Deployment Workspace (ADW)
+The core unit of management in this framework is the **Apigee Deployment Workspace (ADW)**. An ADW is a local directory containing a `terraform.tfvars` configuration and any associated deployment assets (like API Proxy bundles). Each ADW maps 1:1 to a specific Apigee Organization and GCP Project, providing a strict isolation boundary that prevents configuration bleed and state collisions across your Apigee fleet.
+
 It is designed as a **Rapid Starter** for managing quick installations and repairing reference implementations. It captures the idiosyncrasies of managing Apigee with Terraform, navigating complex patterns such as:
 *   **Data Residency (DRZ):** Handling regional control planes and consumer data location.
 *   **Networking:** Configuring Northbound (Ingress/PSC) and Southbound (VPC Peering/PSA) connectivity.
@@ -102,7 +105,26 @@ You have an existing Apigee installation and want to manage it with this tool.
 
 ## CLI Reference
 
-### `apim apply [TEMPLATE]`
+The `apim` CLI is designed to manage the full lifecycle of an Apigee deployment using a local **Apigee Deployment Workspace (ADW)** for each Apigee Organization or GCP Project—from infrastructure provisioning to API delivery and fleet-wide visibility.
+
+### Fleet Visibility & Context Management
+
+#### `apim list`
+Displays a fleet-wide overview of all ADWs known to your local machine. This provides a quick, tabular dashboard of billing types, control planes, and runtime regions across multiple GCP projects without needing to navigate the Google Cloud Console.
+
+#### `apim show` & `apim status`
+Orient yourself before making changes. 
+*   `apim show` details the configuration of your current active directory and lists all infrastructure resources currently tracked by the tool.
+*   `apim status` queries the live Apigee Management API to confirm operational health, reporting on instance readiness, environment attachments, and SSL provisioning.
+
+#### `apim project set [PROJECT_ID]`
+Updates the local `terraform.tfvars` with a new Project ID. This locks your current directory to a specific cloud deployment, creating an isolated ADW.
+
+---
+
+### Infrastructure Provisioning
+
+#### `apim apply [TEMPLATE]`
 Provisions or updates infrastructure. If a template is provided, it enforces that state. If not, it extracts configuration from the existing state.
 
 | Flag | Description |
@@ -110,17 +132,21 @@ Provisions or updates infrastructure. If a template is provided, it enforces tha
 | `--interactive` | Prompt for approval before applying changes. Default is **False** (Auto-approve). |
 | `--skip-apigee` | **Network-Only Mode.** Provisions IAM and Networking (VPC, PSC) but skips Apigee Organization creation (45m). |
 | `--bootstrap-only` | **Identity-Only Mode.** Runs Phase 0 (Service Account & IAM) and exits. |
+| `--skip-impersonation` | Uses your Application Default Credentials (ADC) directly instead of impersonating the deployment service account. |
 
-### `apim import [PROJECT_ID]`
-Discovers existing Google Cloud resources and imports them into the local Terraform state.
+#### `apim import [PROJECT_ID]`
+Discovers existing Google Cloud resources and securely adopts them into the local state, allowing you to manage brownfield environments.
 
 | Flag | Description |
 |---|---|
-| `--control-plane` | Specify the regional control plane (e.g., `ca`, `eu`). Required for finding DRZ Orgs. |
-| `--force` | Overwrites local `terraform.tfvars` if it already exists. |
+| `--control-plane` | Specify the regional control plane (e.g., `ca`, `eu`). Required for finding Data Residency organizations. |
 
-### `apim project set [PROJECT_ID]`
-Updates the local `terraform.tfvars` with a new Project ID and checks for existing state. Use `--force` to overwrite.
+---
+
+### API Lifecycle
+
+#### `apim apis deploy [PROXY_NAME]` & `apim apis test [PROXY_NAME]`
+Bridges the gap between infrastructure and delivery. Deploy proxy bundles directly from your ADW to your provisioned environments and execute automated integration tests to verify southbound connectivity and policy execution.
 
 ---
 
@@ -167,6 +193,14 @@ For regions requiring Data Residency (e.g. Canada, Europe), use a specific templ
 ## Known Issues
 *   **Concurrency:** The CLI disables Terraform state locking (`-lock=false`) to ensure a smooth local experience. Avoid running multiple convergence operations against the same project simultaneously.
 *   **Standard Naming:** Adoption discovery (`apim import`) assumes standard environment (`dev`) and group (`eval-group`) names. Projects with custom naming may require manual `terraform import` for some resources.
+
+---
+
+## Developing API Proxies
+
+When developing and testing API Proxies or Shared Flows, we recommend organizing your project assets within an **Apigee Deployment Workspace (ADW)**—the local directory containing your `terraform.tfvars` configuration. We rely on static analysis tools to ensure bundle integrity before deployment. 
+
+For documentation on how to structure your ADW and how to use tools like `apigeelint` for validation, see the **[API Proxy Development Guide](docs/API-PROXIES.md)**.
 
 ---
 

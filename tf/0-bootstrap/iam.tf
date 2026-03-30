@@ -43,9 +43,9 @@ resource "google_service_account_iam_member" "token_creator" {
 # to allow the SA to manage runtime identities and service permissions in Phase 1.
 resource "google_project_iam_member" "deployer_roles" {
   for_each = toset([
-    "roles/editor",
-    "roles/resourcemanager.projectIamAdmin",
-    "roles/iam.serviceAccountAdmin"
+    "roles/editor",                         # General resource management (cannot modify IAM policies)
+    "roles/resourcemanager.projectIamAdmin", # Allows Terraform to grant project-level roles (e.g. roles/aiplatform.user, roles/modelarmor.viewer) to the runtime service account
+    "roles/iam.serviceAccountAdmin"         # Allows Terraform to grant the Apigee Service Agent permission to impersonate the runtime service account (via roles/iam.serviceAccountUser)
   ])
   project = var.gcp_project_id
   role    = each.key

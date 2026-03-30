@@ -9,13 +9,13 @@ console = Console()
 @click.group()
 def project():
     """
-    Manage the active Google Cloud Project context.
+    Manage the active Google Cloud Project context for the workspace.
     """
     pass
 
 @project.command(name="get")
 def project_get():
-    """Show the currently configured project ID."""
+    """Show the project ID for the current Apigee Deployment Workspace."""
     tfvars_path = Path.cwd() / "terraform.tfvars"
     
     if not tfvars_path.exists():
@@ -39,7 +39,7 @@ def project_get():
 @click.argument("project_id")
 @click.option("--force", is_flag=True, help="Overwrite existing project ID if set.")
 def project_set(project_id, force):
-    """Set the active project ID for the current directory."""
+    """Initialize or update the Apigee Deployment Workspace (ADW) for a project."""
     tfvars_path = Path.cwd() / "terraform.tfvars"
     
     if tfvars_path.exists():

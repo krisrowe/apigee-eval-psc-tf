@@ -104,10 +104,19 @@ resource "google_apigee_organization" "apigee_org" {
   # Use variable instead of hardcoded PAYG
   billing_type = var.apigee_billing_type
 
-  disable_vpc_peering = true
+
+  # Use variable to control peering (default to true to disable peering)
+  disable_vpc_peering = !var.enable_vpc_peering
+
+  # If peering is enabled, provide the network as the authorized_network
+  authorized_network = var.enable_vpc_peering ? google_compute_network.apigee_network.id : null
 
   lifecycle {
     prevent_destroy = true
+    precondition {
+      condition     = !(var.enable_vpc_sc_egress_blocking && !var.enable_vpc_peering)
+      error_message = "VPC-SC Egress Blocking requires VPC Peering to be enabled. Please set 'enable_vpc_peering = true' to use this feature."
+    }
   }
 
   depends_on = [
@@ -116,6 +125,64 @@ resource "google_apigee_organization" "apigee_org" {
     google_project_service.compute,
     google_project_service.servicenetworking,
     google_project_service.dns,
+    google_service_networking_connection.apigee_vpc_connection
+  ]
+}
+
+# --- OPTIONAL PEERING CONFIGURATION ---
+
+# IP range for peering (if enabled)
+resource "google_compute_global_address" "apigee_peering_range" {
+  count         = var.enable_vpc_peering ? 1 : 0
+  name          = "apigee-peering-range"
+  project       = var.gcp_project_id
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 22
+  network       = google_compute_network.apigee_network.id
+}
+
+# Support range for peering (if enabled)
+resource "google_compute_global_address" "apigee_support_range" {
+  count         = var.enable_vpc_peering ? 1 : 0
+  name          = "apigee-support-range"
+  project       = var.gcp_project_id
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 28
+  network       = google_compute_network.apigee_network.id
+}
+
+# Service Networking Connection (The Peering)
+resource "google_service_networking_connection" "apigee_vpc_connection" {
+  count                   = var.enable_vpc_peering ? 1 : 0
+  network                 = google_compute_network.apigee_network.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [
+    google_compute_global_address.apigee_peering_range[0].name,
+    google_compute_global_address.apigee_support_range[0].name
+  ]
+  depends_on = [google_project_service.servicenetworking]
+}
+
+# --- VPC-SC Egress Blocking Enforcement ---
+resource "null_resource" "enforce_vpc_sc_peering" {
+  count = (var.enable_vpc_peering && var.enable_vpc_sc_egress_blocking) ? 1 : 0
+
+  triggers = {
+    network = google_compute_network.apigee_network.id
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+      gcloud services vpc-peerings enable-vpc-service-controls \
+        --network=${google_compute_network.apigee_network.name} \
+        --project=${var.gcp_project_id}
+    EOT
+  }
+
+  depends_on = [
+    google_service_networking_connection.apigee_vpc_connection
   ]
 }
 
@@ -124,6 +191,9 @@ resource "google_apigee_instance" "apigee_instance" {
   name     = coalesce(var.apigee_instance_name, var.apigee_runtime_location)
   location = var.apigee_runtime_location
   org_id   = google_apigee_organization.apigee_org[0].id
+  
+  # Only assign ip_range if peering is enabled
+  ip_range = var.enable_vpc_peering ? "${google_compute_global_address.apigee_peering_range[0].name},${google_compute_global_address.apigee_support_range[0].name}" : null
 
   lifecycle {
     prevent_destroy = true

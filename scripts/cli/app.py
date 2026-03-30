@@ -22,7 +22,12 @@ console = Console()
 
 @click.group()
 def cli():
-    """Apigee Terraform Utility (Project-Centric Redesign)"""
+    """
+    Apigee Terraform Utility.
+    
+    Manages Apigee Deployment Workspaces (ADW) - local directories 
+    containing terraform.tfvars configurations and deployment assets.
+    """
     pass
 
 

@@ -12,7 +12,7 @@ console = Console()
 @click.option("--refresh", is_flag=True, help="Run 'terraform refresh' before showing status.")
 @click.pass_context
 def status_cmd(ctx, refresh):
-    """Check environment status using Terraform state."""
+    """Check environment status for the current Apigee Deployment Workspace."""
     try:
         config = ConfigLoader.load(Path.cwd(), optional=True)
         project_id = config.project.gcp_project_id

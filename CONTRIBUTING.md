@@ -18,7 +18,19 @@ The CLI and Terraform modules follow the principle of **"Implicitly Correct Defa
 - **Billing**: Defaults to `EVALUATION`.
 - **Auto-Upgrade**: If Data Residency (DRZ) is requested (`control_plane_location` is set), the billing type is automatically upgraded to `PAYG` to satisfy GCP requirements with minimal user boilerplate.
 
-### 3. State Management
+### 3. Generic Examples and Documentation
+To ensure `apigee-tf` remains a universally applicable public tool, all documentation, examples, and test fixtures must remain strictly generic:
+- **Agnostic Naming Conventions:** Avoid documenting or enforcing directory naming patterns derived from specific organizational practices. When referencing the directory containing a project's `terraform.tfvars` and associated assets, use the term **Apigee Deployment Workspace (ADW)** or the placeholder `<adw-dir>`.
+- **Acronym Usage Rule:** In every individual string, docstring, or Markdown file, always spell out the full term followed immediately by its acronym in parentheses on its first occurrence. Examples: "Application Default Credentials (ADC)" or "Apigee Deployment Workspace (ADW)". Thereafter, the acronym (e.g., **ADC** or **ADW**) should be used alone within that same context.
+- **No Real Identifiers:** Never commit real GCP Project IDs, Organization IDs, domains, or email addresses. Use standard RFC 2606 placeholders (e.g., `example-project`, `example.com`, `user@example.com`).
+
+### 4. ADW Lifecycle and Tracking
+Apigee Deployment Workspaces are not explicitly "registered" in a central database. Instead, they are tracked implicitly through the local Terraform state store:
+- **Tracking:** The `apim` CLI looks for state files in `~/.local/share/apigee-tf/states/`, where folders are named after the GCP Project ID.
+- **Registration:** An **ADW** is considered "known" to the system as soon as a `plan`, `apply`, or `import` command is executed, which initializes a local state segment for that project.
+- **Listing:** The `apim list` command scans this state store to report on the status of all environments previously touched by the tool.
+
+### 5. State Management
 This repository uses a **Project-ID Centric** state management model:
 - State files are stored locally at `~/.local/share/apigee-tf/states/`.
 - The primary filename is the `gcp_project_id`.

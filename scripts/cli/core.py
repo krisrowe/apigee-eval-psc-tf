@@ -137,7 +137,7 @@ def load_vars():
         return {}
 
 def load_tfstate():
-    """Load terraform state for the local project (Phase 1-main)."""
+    """Load terraform state for the current ADW (Phase 1-main)."""
     _, state_file = get_project_paths()
     
     if state_file.exists():

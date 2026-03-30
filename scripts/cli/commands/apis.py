@@ -86,7 +86,7 @@ def get_hostname_from_config(config) -> str:
 
 @click.group()
 def apis():
-    """Manage API proxies (deploy, test)."""
+    """Manage API proxies within the current Apigee Deployment Workspace."""
     pass
 
 

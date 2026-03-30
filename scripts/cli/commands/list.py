@@ -10,7 +10,7 @@ STATE_ROOT = Path.home() / ".local" / "share" / "apigee-tf"
 
 @click.command(name="list")
 def list_cmd():
-    """List all tracked Apigee projects (based on local state files)."""
+    """List all tracked Apigee Deployment Workspaces."""
     if not STATE_ROOT.exists():
         console.print("[yellow]No projects found (state directory missing).[/yellow]")
         return
